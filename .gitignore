@@ -1,0 +1,63 @@
+# Environment e credenziali - MAI COMMITTARE
+.env
+*.env.local
+backend/config/credentials.php
+
+# Chiavi SSH e certificati
+.ssh/
+*.pem
+*.key
+*.pub
+*.ppk
+chiave.md
+chiave.rtfd/
+
+# File di sessione e documentazione temporanea
+SESSIONE_*.md
+RIPARTI_*.md
+dati-hosting-*.md
+
+# Documentazione interna/privata
+00_*.md
+ROADMAP.md
+proposta_*.md
+
+# Dipendenze
+node_modules/
+vendor/
+
+# Build frontend (ora buildiamo localmente e pusciamo su server)
+frontend/dist/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+._.DS_Store
+._*
+Thumbs.db
+
+# Log
+*.log
+logs/
+
+# Cache
+.cache/
+*.cache
+.claude/
+
+# File temporanei
+*.tmp
+*.temp
+*.bak
+*.backup
+
+# Database dumps (se presenti)
+*.sql.gz
+*.sql.zip
+backup_*.sql
+.git_old/

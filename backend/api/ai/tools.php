@@ -1,0 +1,2397 @@
+<?php
+/**
+ * Tools disponibili per l'AI
+ * Ogni tool è una funzione che l'AI può chiamare per recuperare dati
+ */
+
+/**
+ * Esegue un tool AI e restituisce il risultato
+ */
+function executeAiTool(string $toolName, array $input, array $user): array {
+    $db = getDB();
+    $aziendaId = $user['azienda_id'] ?? null;
+
+    try {
+        switch ($toolName) {
+            // Tool PRINCIPALE - Chiama qualsiasi API
+            case 'call_api':
+                return tool_callApi($input, $user);
+
+            case 'query_database':
+                return tool_queryDatabase($db, $input, $aziendaId);
+
+            case 'get_database_schema':
+                return tool_getDatabaseSchema($db);
+
+            case 'search_entities':
+                return tool_searchEntities($db, $input, $aziendaId);
+
+            case 'search_entities_near':
+                return tool_searchEntitiesNear($db, $input, $aziendaId);
+
+            case 'get_entity_details':
+                return tool_getEntityDetails($db, $input, $aziendaId);
+
+            case 'get_sales_stats':
+                return tool_getSalesStats($db, $input, $aziendaId);
+
+            case 'get_connections':
+                return tool_getConnections($db, $input, $aziendaId);
+
+            // Tool di SCRITTURA
+            case 'geocode_address':
+                return tool_geocodeAddress($input);
+
+            case 'reverse_geocode':
+                return tool_reverseGeocode($input);
+
+            case 'create_entity':
+                return tool_createEntity($db, $input, $user);
+
+            case 'update_entity':
+                return tool_updateEntity($db, $input, $user);
+
+            case 'create_connection':
+                return tool_createConnection($db, $input, $user);
+
+            case 'create_sale':
+                return tool_createSale($db, $input, $user);
+
+            case 'create_note':
+                return tool_createNote($db, $input, $user);
+
+            // Tool di ELIMINAZIONE
+            case 'delete_entity':
+                return tool_deleteEntity($db, $input, $user);
+
+            case 'delete_connection':
+                return tool_deleteConnection($db, $input, $user);
+
+            case 'delete_sale':
+                return tool_deleteSale($db, $input, $user);
+
+            // Tool MAPPA - Azioni frontend
+            case 'map_fly_to':
+                return tool_mapFlyTo($input);
+
+            case 'map_set_style':
+                return tool_mapSetStyle($input);
+
+            case 'map_select_entity':
+                return tool_mapSelectEntity($db, $input, $user);
+
+            case 'map_show_connections':
+                return tool_mapShowConnections($db, $input, $user);
+
+            // Tool UNIFICATO per marker
+            case 'map_marker':
+                return tool_mapMarker($input);
+
+            // Backward compatibility per vecchi tool (se AI li usa ancora)
+            case 'map_place_marker':
+                return tool_mapPlaceMarker($input);
+
+            case 'map_remove_marker':
+                return tool_mapRemoveMarker($input);
+
+            case 'map_clear_markers':
+                return tool_mapClearMarkers($input);
+
+            // Tool UI - Azioni frontend
+            case 'ui_open_panel':
+                return tool_uiOpenPanel($input);
+
+            case 'ui_show_notification':
+                return tool_uiShowNotification($input);
+
+            // Tool UI INTERACT - Esegue azioni registrate dai componenti React
+            case 'ui_interact':
+                return tool_uiInteract($input);
+
+            // Tool AUTONOMIA - L'AI esplora e impara
+            case 'explore_code':
+                return tool_exploreCode($input);
+
+            case 'save_learning':
+                return tool_saveLearning($input, $user);
+
+            case 'read_learnings':
+                return tool_readLearnings($user);
+
+            case 'propose_improvement':
+                return tool_proposeImprovement($input, $user);
+
+            // Tool FILE SYSTEM - Lazy loading e memoria
+            case 'read_file':
+                return tool_readFile($input);
+
+            case 'write_file':
+                return tool_writeFile($input);
+
+            case 'list_files':
+                return tool_listFiles($input);
+
+            // Tool CONTESTO UTENTE - Lazy loading azioni utente
+            case 'get_user_actions':
+                return tool_getUserActions();
+
+            // Tool MEMORIA AGEA - Memoria strutturata persistente
+            case 'agea_read_memory':
+                return tool_ageaReadMemory();
+
+            case 'agea_update_memory':
+                return tool_ageaUpdateMemory($input);
+
+            case 'agea_remember_entity':
+                return tool_ageaRememberEntity($input);
+
+            case 'agea_save_insight':
+                return tool_ageaSaveInsight($input);
+
+            // Tool STRUTTURA TEAM - Tipi, tipologie, campi, famiglie prodotto
+            case 'get_team_structure':
+                return tool_getTeamStructure($user);
+
+            default:
+                return ['error' => "Tool sconosciuto: $toolName"];
+        }
+    } catch (Exception $e) {
+        error_log("AI Tool error ($toolName): " . $e->getMessage());
+        return ['error' => $e->getMessage()];
+    }
+}
+
+/**
+ * Tool: Esegue query SQL (SELECT, SHOW, DESCRIBE)
+ */
+function tool_queryDatabase(PDO $db, array $input, ?string $aziendaId): array {
+    $sql = $input['sql'] ?? '';
+
+    // Validazione sicurezza: SELECT, SHOW, DESCRIBE
+    $sqlUpper = strtoupper(trim($sql));
+    $isSelect = str_starts_with($sqlUpper, 'SELECT');
+    $isShow = str_starts_with($sqlUpper, 'SHOW');
+    $isDescribe = str_starts_with($sqlUpper, 'DESCRIBE') || str_starts_with($sqlUpper, 'DESC ');
+
+    if (!$isSelect && !$isShow && !$isDescribe) {
+        return ['error' => 'Solo SELECT, SHOW TABLES e DESCRIBE sono permessi'];
+    }
+
+    // Blocca parole chiave pericolose
+    $forbidden = ['INSERT', 'UPDATE', 'DELETE', 'DROP', 'CREATE', 'ALTER', 'TRUNCATE', 'GRANT', 'REVOKE'];
+    foreach ($forbidden as $word) {
+        if (str_contains($sqlUpper, $word)) {
+            return ['error' => "Operazione $word non permessa"];
+        }
+    }
+
+    // Esegui query
+    try {
+        $stmt = $db->prepare($sql);
+        $stmt->execute();
+        $results = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+        // Limita risultati per non sovraccaricare
+        $limited = array_slice($results, 0, 100);
+
+        return [
+            'success' => true,
+            'rows' => count($results),
+            'data' => $limited,
+            'truncated' => count($results) > 100
+        ];
+    } catch (PDOException $e) {
+        return ['error' => 'Errore SQL: ' . $e->getMessage()];
+    }
+}
+
+/**
+ * Tool: Ottiene schema database
+ */
+function tool_getDatabaseSchema(PDO $db): array {
+    $schema = [];
+
+    // Lista tabelle
+    $tables = $db->query("SHOW TABLES")->fetchAll(PDO::FETCH_COLUMN);
+
+    foreach ($tables as $table) {
+        // Salta tabelle di sistema
+        if (str_starts_with($table, 'pma_') || $table === 'migrations') continue;
+
+        $columns = $db->query("DESCRIBE `$table`")->fetchAll(PDO::FETCH_ASSOC);
+        $schema[$table] = array_map(function($col) {
+            return [
+                'name' => $col['Field'],
+                'type' => $col['Type'],
+                'nullable' => $col['Null'] === 'YES',
+                'key' => $col['Key']
+            ];
+        }, $columns);
+    }
+
+    return [
+        'success' => true,
+        'tables' => array_keys($schema),
+        'schema' => $schema
+    ];
+}
+
+/**
+ * Tool: Cerca entità
+ */
+function tool_searchEntities(PDO $db, array $input, ?string $aziendaId): array {
+    $query = $input['query'] ?? '';
+    $tipo = $input['tipo'] ?? null;
+    $limit = min($input['limit'] ?? 10, 50);
+
+    $sql = "SELECT id, nome, tipo, categorie, indirizzo, email, telefono
+            FROM neuroni
+            WHERE azienda_id = ?";
+    $params = [$aziendaId];
+
+    if ($query) {
+        $sql .= " AND (nome LIKE ? OR indirizzo LIKE ?)";
+        $params[] = "%$query%";
+        $params[] = "%$query%";
+    }
+
+    if ($tipo) {
+        $sql .= " AND tipo = ?";
+        $params[] = $tipo;
+    }
+
+    $sql .= " ORDER BY nome ASC LIMIT ?";
+    $params[] = $limit;
+
+    $stmt = $db->prepare($sql);
+    $stmt->execute($params);
+    $results = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    // Decodifica JSON categorie
+    foreach ($results as &$r) {
+        $r['categorie'] = $r['categorie'] ? json_decode($r['categorie'], true) : [];
+    }
+
+    return [
+        'success' => true,
+        'count' => count($results),
+        'entities' => $results
+    ];
+}
+
+/**
+ * Tool: Cerca entità vicine a una posizione geografica
+ * Usa la formula di Haversine per calcolare la distanza
+ */
+function tool_searchEntitiesNear(PDO $db, array $input, ?string $aziendaId): array {
+    $lat = $input['lat'] ?? null;
+    $lng = $input['lng'] ?? null;
+    $radiusKm = $input['radius_km'] ?? 1; // Default 1 km
+    $tipo = $input['tipo'] ?? null;
+    $limit = min($input['limit'] ?? 20, 50); // Max 50
+
+    if ($lat === null || $lng === null) {
+        return ['error' => 'lat e lng sono richiesti'];
+    }
+
+    // Formula Haversine per calcolare distanza in km
+    // 6371 = raggio Terra in km
+    $sql = "
+        SELECT
+            id, nome, tipo, categorie, indirizzo, lat, lng,
+            (6371 * acos(
+                cos(radians(?)) * cos(radians(lat)) * cos(radians(lng) - radians(?)) +
+                sin(radians(?)) * sin(radians(lat))
+            )) AS distance_km
+        FROM neuroni
+        WHERE lat IS NOT NULL
+          AND lng IS NOT NULL
+          AND azienda_id = ?
+    ";
+    $params = [$lat, $lng, $lat, $aziendaId];
+
+    if ($tipo) {
+        $sql .= " AND tipo = ?";
+        $params[] = $tipo;
+    }
+
+    $sql .= " HAVING distance_km <= ? ORDER BY distance_km ASC LIMIT ?";
+    $params[] = $radiusKm;
+    $params[] = $limit;
+
+    $stmt = $db->prepare($sql);
+    $stmt->execute($params);
+    $results = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    // Decodifica categorie e formatta distanza
+    foreach ($results as &$r) {
+        $r['categorie'] = $r['categorie'] ? json_decode($r['categorie'], true) : [];
+        $r['distance_km'] = round((float)$r['distance_km'], 2);
+        $r['distance_m'] = round((float)$r['distance_km'] * 1000);
+    }
+
+    return [
+        'success' => true,
+        'center' => ['lat' => $lat, 'lng' => $lng],
+        'radius_km' => $radiusKm,
+        'count' => count($results),
+        'entities' => $results
+    ];
+}
+
+/**
+ * Tool: Dettagli entità completi
+ */
+function tool_getEntityDetails(PDO $db, array $input, ?string $aziendaId): array {
+    $entityId = $input['entity_id'] ?? '';
+
+    if (!$entityId) {
+        return ['error' => 'entity_id richiesto'];
+    }
+
+    // Recupera entità
+    $stmt = $db->prepare("
+        SELECT *
+        FROM neuroni
+        WHERE id = ? AND azienda_id = ?
+    ");
+    $stmt->execute([$entityId, $aziendaId]);
+    $entity = $stmt->fetch(PDO::FETCH_ASSOC);
+
+    if (!$entity) {
+        return ['error' => 'Entità non trovata'];
+    }
+
+    $entity['categorie'] = $entity['categorie'] ? json_decode($entity['categorie'], true) : [];
+    $entity['dati_extra'] = $entity['dati_extra'] ? json_decode($entity['dati_extra'], true) : null;
+
+    // Recupera connessioni
+    $stmt = $db->prepare("
+        SELECT s.*, n.nome as nome_controparte
+        FROM sinapsi s
+        LEFT JOIN neuroni n ON (
+            CASE WHEN s.neurone_da = ? THEN s.neurone_a ELSE s.neurone_da END = n.id
+        )
+        WHERE (s.neurone_da = ? OR s.neurone_a = ?) AND s.azienda_id = ?
+        LIMIT 20
+    ");
+    $stmt->execute([$entityId, $entityId, $entityId, $aziendaId]);
+    $connections = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    // Recupera vendite
+    $stmt = $db->prepare("
+        SELECT v.*, fp.nome as famiglia_nome
+        FROM vendite_prodotto v
+        LEFT JOIN famiglie_prodotto fp ON v.famiglia_id = fp.id
+        WHERE v.neurone_id = ?
+        ORDER BY v.data_vendita DESC
+        LIMIT 20
+    ");
+    $stmt->execute([$entityId]);
+    $sales = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    // Calcola totali
+    $stmt = $db->prepare("
+        SELECT COUNT(*) as num_vendite, SUM(importo) as totale_vendite
+        FROM vendite_prodotto
+        WHERE neurone_id = ?
+    ");
+    $stmt->execute([$entityId]);
+    $totals = $stmt->fetch(PDO::FETCH_ASSOC);
+
+    return [
+        'success' => true,
+        'entity' => $entity,
+        'connections' => $connections,
+        'recent_sales' => $sales,
+        'totals' => [
+            'num_vendite' => (int)$totals['num_vendite'],
+            'totale_vendite' => (float)$totals['totale_vendite']
+        ]
+    ];
+}
+
+/**
+ * Tool: Statistiche vendite
+ */
+function tool_getSalesStats(PDO $db, array $input, ?string $aziendaId): array {
+    $entityId = $input['entity_id'] ?? null;
+    $fromDate = $input['from_date'] ?? date('Y-m-d', strtotime('-1 year'));
+    $toDate = $input['to_date'] ?? date('Y-m-d');
+    $groupBy = $input['group_by'] ?? 'month';
+
+    $params = [$aziendaId, $fromDate, $toDate];
+
+    // Query base
+    $sql = "SELECT ";
+
+    switch ($groupBy) {
+        case 'month':
+            $sql .= "DATE_FORMAT(v.data_vendita, '%Y-%m') as periodo, ";
+            break;
+        case 'entity':
+            $sql .= "v.neurone_id, n.nome as entita, ";
+            break;
+        case 'family':
+            $sql .= "v.famiglia_id, fp.nome as famiglia, ";
+            break;
+        default:
+            $sql .= "DATE_FORMAT(v.data_vendita, '%Y-%m') as periodo, ";
+    }
+
+    $sql .= "COUNT(*) as num_transazioni, SUM(v.importo) as totale, AVG(v.importo) as media
+             FROM vendite_prodotto v
+             LEFT JOIN neuroni n ON v.neurone_id = n.id
+             LEFT JOIN famiglie_prodotto fp ON v.famiglia_id = fp.id
+             WHERE v.azienda_id = ? AND v.data_vendita BETWEEN ? AND ?";
+
+    if ($entityId) {
+        $sql .= " AND v.neurone_id = ?";
+        $params[] = $entityId;
+    }
+
+    switch ($groupBy) {
+        case 'month':
+            $sql .= " GROUP BY DATE_FORMAT(v.data_vendita, '%Y-%m') ORDER BY periodo DESC";
+            break;
+        case 'entity':
+            $sql .= " GROUP BY v.neurone_id, n.nome ORDER BY totale DESC LIMIT 20";
+            break;
+        case 'family':
+            $sql .= " GROUP BY v.famiglia_id, fp.nome ORDER BY totale DESC";
+            break;
+    }
+
+    $stmt = $db->prepare($sql);
+    $stmt->execute($params);
+    $stats = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    // Totale generale
+    $totalSql = "SELECT COUNT(*) as num, SUM(importo) as tot
+                 FROM vendite_prodotto
+                 WHERE azienda_id = ? AND data_vendita BETWEEN ? AND ?";
+    $totalParams = [$aziendaId, $fromDate, $toDate];
+
+    if ($entityId) {
+        $totalSql .= " AND neurone_id = ?";
+        $totalParams[] = $entityId;
+    }
+
+    $stmt = $db->prepare($totalSql);
+    $stmt->execute($totalParams);
+    $total = $stmt->fetch(PDO::FETCH_ASSOC);
+
+    return [
+        'success' => true,
+        'period' => ['from' => $fromDate, 'to' => $toDate],
+        'group_by' => $groupBy,
+        'stats' => $stats,
+        'total' => [
+            'transazioni' => (int)$total['num'],
+            'importo' => (float)$total['tot']
+        ]
+    ];
+}
+
+/**
+ * Tool: Connessioni entità
+ */
+function tool_getConnections(PDO $db, array $input, ?string $aziendaId): array {
+    $entityId = $input['entity_id'] ?? '';
+    $targetId = $input['target_id'] ?? null;
+
+    if (!$entityId) {
+        return ['error' => 'entity_id richiesto'];
+    }
+
+    $sql = "SELECT s.*,
+                   n1.nome as nome_da, n1.tipo as tipo_da,
+                   n2.nome as nome_a, n2.tipo as tipo_a
+            FROM sinapsi s
+            LEFT JOIN neuroni n1 ON s.neurone_da = n1.id
+            LEFT JOIN neuroni n2 ON s.neurone_a = n2.id
+            WHERE s.azienda_id = ?
+              AND (s.neurone_da = ? OR s.neurone_a = ?)";
+    $params = [$aziendaId, $entityId, $entityId];
+
+    if ($targetId) {
+        $sql .= " AND (s.neurone_da = ? OR s.neurone_a = ?)";
+        $params[] = $targetId;
+        $params[] = $targetId;
+    }
+
+    $sql .= " LIMIT 50";
+
+    $stmt = $db->prepare($sql);
+    $stmt->execute($params);
+    $connections = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    return [
+        'success' => true,
+        'entity_id' => $entityId,
+        'count' => count($connections),
+        'connections' => $connections
+    ];
+}
+
+// ============================================================
+// TOOL DI SCRITTURA
+// ============================================================
+
+/**
+ * Tool: Geocoding indirizzo
+ * Cerca un indirizzo e restituisce le coordinate
+ */
+function tool_geocodeAddress(array $input): array {
+    $address = $input['address'] ?? '';
+    $limit = $input['limit'] ?? 5;
+
+    if (empty($address)) {
+        return ['error' => 'Indirizzo richiesto'];
+    }
+
+    // Usa Nominatim (gratuito) per il geocoding
+    $url = 'https://nominatim.openstreetmap.org/search';
+    $url .= '?' . http_build_query([
+        'q' => $address,
+        'format' => 'json',
+        'limit' => $limit,
+        'addressdetails' => 1,
+        'countrycodes' => 'it'
+    ]);
+
+    $context = stream_context_create([
+        'http' => [
+            'header' => 'User-Agent: GenAgenta/1.0',
+            'timeout' => 10
+        ]
+    ]);
+
+    try {
+        $response = @file_get_contents($url, false, $context);
+        if ($response === false) {
+            error_log("Geocoding failed for: $address");
+            return ['error' => 'Errore nella richiesta di geocoding. Riprova.'];
+        }
+    } catch (Exception $e) {
+        error_log("Geocoding exception: " . $e->getMessage());
+        return ['error' => 'Errore durante il geocoding: ' . $e->getMessage()];
+    }
+
+    $data = json_decode($response, true);
+    if (!is_array($data) || empty($data)) {
+        return [
+            'success' => true,
+            'results' => [],
+            'message' => 'Nessun risultato trovato per: ' . $address
+        ];
+    }
+
+    $results = array_map(function($item) {
+        return [
+            'formatted' => $item['display_name'] ?? '',
+            'lat' => (float)($item['lat'] ?? 0),
+            'lng' => (float)($item['lon'] ?? 0),
+            'type' => $item['type'] ?? 'unknown'
+        ];
+    }, $data);
+
+    return [
+        'success' => true,
+        'query' => $address,
+        'results' => $results
+    ];
+}
+
+/**
+ * Tool: Reverse Geocoding - converte coordinate GPS in indirizzo
+ */
+function tool_reverseGeocode(array $input): array {
+    $lat = $input['lat'] ?? null;
+    $lng = $input['lng'] ?? null;
+
+    if ($lat === null || $lng === null) {
+        return ['error' => 'Parametri lat e lng richiesti'];
+    }
+
+    $lat = (float)$lat;
+    $lng = (float)$lng;
+
+    // Validazione coordinate
+    if ($lat < -90 || $lat > 90 || $lng < -180 || $lng > 180) {
+        return ['error' => 'Coordinate non valide'];
+    }
+
+    // Usa Nominatim (gratuito) per il reverse geocoding
+    $url = 'https://nominatim.openstreetmap.org/reverse?' . http_build_query([
+        'lat' => $lat,
+        'lon' => $lng,
+        'format' => 'json',
+        'addressdetails' => 1,
+        'accept-language' => 'it'
+    ]);
+
+    $context = stream_context_create([
+        'http' => [
+            'header' => 'User-Agent: GenAgenta/1.0',
+            'timeout' => 10
+        ]
+    ]);
+
+    try {
+        $response = @file_get_contents($url, false, $context);
+        if ($response === false) {
+            error_log("Reverse geocoding failed for: $lat, $lng");
+            return ['error' => 'Errore nella richiesta di geocoding inverso. Riprova.'];
+        }
+    } catch (Exception $e) {
+        error_log("Reverse geocoding exception: " . $e->getMessage());
+        return ['error' => 'Errore durante il geocoding inverso: ' . $e->getMessage()];
+    }
+
+    $data = json_decode($response, true);
+    if (!is_array($data) || isset($data['error'])) {
+        return [
+            'success' => true,
+            'address' => null,
+            'message' => 'Nessun risultato trovato per le coordinate'
+        ];
+    }
+
+    $addr = $data['address'] ?? [];
+
+    return [
+        'success' => true,
+        'lat' => $lat,
+        'lng' => $lng,
+        'address' => $data['display_name'] ?? null,
+        'street' => $addr['road'] ?? null,
+        'number' => $addr['house_number'] ?? null,
+        'city' => $addr['city'] ?? $addr['town'] ?? $addr['municipality'] ?? null,
+        'postcode' => $addr['postcode'] ?? null,
+        'country' => $addr['country'] ?? null
+    ];
+}
+
+/**
+ * Tool: Crea nuova entità (neurone)
+ */
+function tool_createEntity(PDO $db, array $input, array $user): array {
+    $nome = $input['nome'] ?? '';
+    $tipo = $input['tipo'] ?? null;
+    $indirizzo = $input['indirizzo'] ?? null;
+    $lat = $input['lat'] ?? null;
+    $lng = $input['lng'] ?? null;
+    $email = $input['email'] ?? null;
+    $telefono = $input['telefono'] ?? null;
+    $categorie = $input['categorie'] ?? [];
+    $visibilita = $input['personale'] ?? false ? 'personale' : 'aziendale';
+
+    if (empty($nome)) {
+        return ['error' => 'Nome entità richiesto'];
+    }
+
+    // Recupera tipi disponibili dal database (prima tipi v2, poi tipi_neurone v1)
+    $aziendaId = $user['azienda_id'] ?? null;
+    $teamId = $user['team_id'] ?? $aziendaId;
+
+    $tipiDisponibili = [];
+
+    // Prima cerca in tabella tipi (v2)
+    if ($teamId) {
+        $stmt = $db->prepare("SELECT nome FROM tipi WHERE team_id = ?");
+        $stmt->execute([$teamId]);
+        $tipiDisponibili = $stmt->fetchAll(PDO::FETCH_COLUMN);
+    }
+
+    // Fallback a tipi_neurone (v1) se vuoto
+    if (empty($tipiDisponibili) && $aziendaId) {
+        $stmt = $db->prepare("SELECT nome FROM tipi_neurone WHERE azienda_id = ?");
+        $stmt->execute([$aziendaId]);
+        $tipiDisponibili = $stmt->fetchAll(PDO::FETCH_COLUMN);
+    }
+
+    if (empty($tipiDisponibili)) {
+        return ['error' => 'Nessun tipo configurato nel sistema. Configura prima i tipi di entità.'];
+    }
+
+    // Se tipo non specificato, usa il primo disponibile
+    if (empty($tipo)) {
+        $tipo = $tipiDisponibili[0];
+    }
+
+    // Valida tipo (case-insensitive)
+    $tipoTrovato = null;
+    foreach ($tipiDisponibili as $t) {
+        if (strtolower($t) === strtolower($tipo)) {
+            $tipoTrovato = $t; // Usa il nome esatto dal DB
+            break;
+        }
+    }
+
+    if (!$tipoTrovato) {
+        return ['error' => "Tipo '$tipo' non valido. Tipi disponibili: " . implode(', ', $tipiDisponibili)];
+    }
+
+    $tipo = $tipoTrovato; // Usa il nome esatto dal database
+
+    // Recupera categorie (tipologie) disponibili per questo tipo
+    $categorieDisponibili = [];
+
+    // Prima cerca in tipologie (v2) - collegate a tipi tramite tipo_id
+    $stmt = $db->prepare("
+        SELECT tp.nome FROM tipologie tp
+        JOIN tipi t ON tp.tipo_id = t.id
+        WHERE t.team_id = ? AND t.nome = ?
+        ORDER BY tp.ordine ASC
+    ");
+    $stmt->execute([$teamId, $tipo]);
+    $categorieDisponibili = $stmt->fetchAll(PDO::FETCH_COLUMN);
+
+    // Fallback a categorie (v1) se vuoto
+    if (empty($categorieDisponibili) && $aziendaId) {
+        $stmt = $db->prepare("
+            SELECT c.nome FROM categorie c
+            JOIN tipi_neurone tn ON c.tipo_id = tn.id
+            WHERE tn.azienda_id = ? AND tn.nome = ?
+            ORDER BY c.ordine ASC
+        ");
+        $stmt->execute([$aziendaId, $tipo]);
+        $categorieDisponibili = $stmt->fetchAll(PDO::FETCH_COLUMN);
+    }
+
+    // Valida categorie
+    if (empty($categorie)) {
+        if (!empty($categorieDisponibili)) {
+            // Se non passata, usa la prima disponibile
+            $categorie = [$categorieDisponibili[0]];
+        }
+        // Se non ci sono categorie configurate, lascia vuoto (alcuni tipi potrebbero non averle)
+    } else {
+        // Valida che le categorie passate esistano (case-insensitive)
+        $categorieValide = [];
+        foreach ($categorie as $cat) {
+            $found = false;
+            foreach ($categorieDisponibili as $catDB) {
+                if (strtolower($cat) === strtolower($catDB)) {
+                    $categorieValide[] = $catDB; // Usa nome esatto dal DB
+                    $found = true;
+                    break;
+                }
+            }
+            if (!$found && !empty($categorieDisponibili)) {
+                return ['error' => "Categoria '$cat' non valida per tipo '$tipo'. Categorie disponibili: " . implode(', ', $categorieDisponibili)];
+            }
+        }
+        if (!empty($categorieValide)) {
+            $categorie = $categorieValide;
+        }
+    }
+
+    // Genera UUID
+    $id = sprintf('%04x%04x-%04x-%04x-%04x-%04x%04x%04x',
+        mt_rand(0, 0xffff), mt_rand(0, 0xffff),
+        mt_rand(0, 0xffff),
+        mt_rand(0, 0x0fff) | 0x4000,
+        mt_rand(0, 0x3fff) | 0x8000,
+        mt_rand(0, 0xffff), mt_rand(0, 0xffff), mt_rand(0, 0xffff)
+    );
+
+    try {
+        // Struttura allineata a neuroni/create.php
+        $sql = "INSERT INTO neuroni (
+                    id, nome, tipo, categorie, visibilita, lat, lng,
+                    indirizzo, telefono, email, creato_da, azienda_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+
+        $stmt = $db->prepare($sql);
+        $stmt->execute([
+            $id,
+            $nome,
+            $tipo,
+            json_encode($categorie),
+            $visibilita,
+            $lat,
+            $lng,
+            $indirizzo,
+            $telefono,
+            $email,
+            $user['user_id'],
+            $user['azienda_id']
+        ]);
+    } catch (PDOException $e) {
+        error_log("create_entity SQL error: " . $e->getMessage());
+        return ['error' => "Errore database: " . $e->getMessage()];
+    }
+
+    return [
+        'success' => true,
+        'message' => "Entità '$nome' creata con successo",
+        'entity_id' => $id,
+        'entity' => [
+            'id' => $id,
+            'nome' => $nome,
+            'tipo' => $tipo,
+            'indirizzo' => $indirizzo,
+            'lat' => $lat,
+            'lng' => $lng
+        ],
+        // Azione frontend: ricarica neuroni per mostrare la nuova entità sulla mappa
+        '_frontend_action' => [
+            'type' => 'refresh_neuroni'
+        ]
+    ];
+}
+
+/**
+ * Tool: Aggiorna entità esistente
+ */
+function tool_updateEntity(PDO $db, array $input, array $user): array {
+    $entityId = $input['entity_id'] ?? '';
+
+    if (empty($entityId)) {
+        return ['error' => 'entity_id richiesto'];
+    }
+
+    // Verifica che l'entità esista e appartenga all'azienda
+    $stmt = $db->prepare("SELECT * FROM neuroni WHERE id = ? AND azienda_id = ?");
+    $stmt->execute([$entityId, $user['azienda_id']]);
+    $existing = $stmt->fetch(PDO::FETCH_ASSOC);
+
+    if (!$existing) {
+        return ['error' => 'Entità non trovata o non accessibile'];
+    }
+
+    // Prepara campi da aggiornare
+    $updates = [];
+    $params = [];
+
+    $campiAggiornabili = ['nome', 'indirizzo', 'email', 'telefono', 'note'];
+    foreach ($campiAggiornabili as $campo) {
+        if (isset($input[$campo])) {
+            $updates[] = "$campo = ?";
+            $params[] = $input[$campo];
+        }
+    }
+
+    // Coordinate
+    if (isset($input['lat']) && isset($input['lng'])) {
+        $updates[] = "lat = ?";
+        $updates[] = "lng = ?";
+        $params[] = $input['lat'];
+        $params[] = $input['lng'];
+    }
+
+    // Categorie
+    if (isset($input['categorie'])) {
+        $updates[] = "categorie = ?";
+        $params[] = json_encode($input['categorie']);
+    }
+
+    // Dati extra (campi personalizzati configurati in Setup)
+    // L'AI può passare dati_extra come oggetto con i campi da aggiornare
+    // Es: dati_extra: { "comune_di": "Roma", "permesso": "n° 123" }
+    if (isset($input['dati_extra']) && is_array($input['dati_extra'])) {
+        // Merge con dati_extra esistenti
+        $existingExtra = $existing['dati_extra'] ? json_decode($existing['dati_extra'], true) : [];
+        $newExtra = array_merge($existingExtra ?? [], $input['dati_extra']);
+        $updates[] = "dati_extra = ?";
+        $params[] = json_encode($newExtra);
+    }
+
+    // Natura commerciale (flag booleani per checkbox nel pannello)
+    // Questi sono DIVERSI dalle categorie! Le categorie = colore, questi = ruolo commerciale
+    $flagsNaturaCommerciale = ['is_acquirente', 'is_venditore', 'is_intermediario', 'is_influencer'];
+    foreach ($flagsNaturaCommerciale as $flag) {
+        if (isset($input[$flag])) {
+            $updates[] = "$flag = ?";
+            $params[] = $input[$flag] ? 1 : 0;
+        }
+    }
+
+    if (empty($updates)) {
+        return ['error' => 'Nessun campo da aggiornare specificato'];
+    }
+
+    $params[] = $entityId;
+    $params[] = $user['azienda_id'];
+
+    $sql = "UPDATE neuroni SET " . implode(', ', $updates) . " WHERE id = ? AND azienda_id = ?";
+    $stmt = $db->prepare($sql);
+    $stmt->execute($params);
+
+    return [
+        'success' => true,
+        'message' => "Entità aggiornata con successo",
+        'entity_id' => $entityId,
+        // Azione frontend: ricarica neuroni per mostrare le modifiche sulla mappa
+        '_frontend_action' => [
+            'type' => 'refresh_neuroni'
+        ]
+    ];
+}
+
+/**
+ * Tool: Crea connessione (sinapsi) tra due entità
+ */
+function tool_createConnection(PDO $db, array $input, array $user): array {
+    $neuroneDa = $input['entity_from'] ?? $input['neurone_da'] ?? '';
+    $neuroneA = $input['entity_to'] ?? $input['neurone_a'] ?? '';
+    $tipo = $input['tipo'] ?? 'commerciale';
+    $note = $input['note'] ?? null;
+    $personale = $input['personale'] ?? false;
+
+    if (empty($neuroneDa) || empty($neuroneA)) {
+        return ['error' => 'entity_from e entity_to sono richiesti'];
+    }
+
+    if ($neuroneDa === $neuroneA) {
+        return ['error' => 'Non puoi collegare un\'entità a se stessa'];
+    }
+
+    // Verifica che entrambe le entità esistano
+    $stmt = $db->prepare("SELECT id, nome FROM neuroni WHERE id IN (?, ?) AND azienda_id = ?");
+    $stmt->execute([$neuroneDa, $neuroneA, $user['azienda_id']]);
+    $entities = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    if (count($entities) !== 2) {
+        return ['error' => 'Una o entrambe le entità non esistono o non sono accessibili'];
+    }
+
+    // Verifica che non esista già una connessione
+    $stmt = $db->prepare("
+        SELECT id FROM sinapsi
+        WHERE ((neurone_da = ? AND neurone_a = ?) OR (neurone_da = ? AND neurone_a = ?))
+        AND azienda_id = ?
+    ");
+    $stmt->execute([$neuroneDa, $neuroneA, $neuroneA, $neuroneDa, $user['azienda_id']]);
+    if ($stmt->fetch()) {
+        return ['error' => 'Esiste già una connessione tra queste due entità'];
+    }
+
+    // Genera UUID
+    $id = sprintf('%04x%04x-%04x-%04x-%04x-%04x%04x%04x',
+        mt_rand(0, 0xffff), mt_rand(0, 0xffff),
+        mt_rand(0, 0xffff),
+        mt_rand(0, 0x0fff) | 0x4000,
+        mt_rand(0, 0x3fff) | 0x8000,
+        mt_rand(0, 0xffff), mt_rand(0, 0xffff), mt_rand(0, 0xffff)
+    );
+
+    $sql = "INSERT INTO sinapsi (
+                id, azienda_id, neurone_da, neurone_a, tipo, note,
+                personale, creato_da, data_inizio, creato_il
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURDATE(), NOW())";
+
+    $stmt = $db->prepare($sql);
+    $stmt->execute([
+        $id,
+        $user['azienda_id'],
+        $neuroneDa,
+        $neuroneA,
+        $tipo,
+        $note,
+        $personale ? 1 : 0,
+        $user['user_id']
+    ]);
+
+    // Recupera nomi per il messaggio
+    $nomi = [];
+    foreach ($entities as $e) {
+        $nomi[$e['id']] = $e['nome'];
+    }
+
+    return [
+        'success' => true,
+        'message' => "Connessione creata tra '{$nomi[$neuroneDa]}' e '{$nomi[$neuroneA]}'",
+        'connection_id' => $id,
+        'tipo' => $tipo
+    ];
+}
+
+/**
+ * Tool: Crea una vendita/transazione
+ */
+function tool_createSale(PDO $db, array $input, array $user): array {
+    $neuroneId = $input['entity_id'] ?? $input['neurone_id'] ?? '';
+    $importo = $input['importo'] ?? 0;
+    $famigliaId = $input['famiglia_id'] ?? null;
+    $dataVendita = $input['data'] ?? date('Y-m-d');
+    $descrizione = $input['descrizione'] ?? null;
+    $sinapsiId = $input['sinapsi_id'] ?? null;
+    $tipoTransazione = $input['tipo_transazione'] ?? 'vendita';
+
+    if (empty($neuroneId)) {
+        return ['error' => 'entity_id richiesto'];
+    }
+
+    if ($importo <= 0) {
+        return ['error' => 'Importo deve essere maggiore di 0'];
+    }
+
+    // Verifica entità
+    $stmt = $db->prepare("SELECT id, nome FROM neuroni WHERE id = ? AND azienda_id = ?");
+    $stmt->execute([$neuroneId, $user['azienda_id']]);
+    $entity = $stmt->fetch(PDO::FETCH_ASSOC);
+
+    if (!$entity) {
+        return ['error' => 'Entità non trovata o non accessibile'];
+    }
+
+    // Genera UUID
+    $id = sprintf('%04x%04x-%04x-%04x-%04x-%04x%04x%04x',
+        mt_rand(0, 0xffff), mt_rand(0, 0xffff),
+        mt_rand(0, 0xffff),
+        mt_rand(0, 0x0fff) | 0x4000,
+        mt_rand(0, 0x3fff) | 0x8000,
+        mt_rand(0, 0xffff), mt_rand(0, 0xffff), mt_rand(0, 0xffff)
+    );
+
+    $sql = "INSERT INTO vendite_prodotto (
+                id, azienda_id, neurone_id, sinapsi_id, famiglia_id,
+                importo, tipo_transazione, data_vendita, descrizione, creato_da, creato_il
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())";
+
+    $stmt = $db->prepare($sql);
+    $stmt->execute([
+        $id,
+        $user['azienda_id'],
+        $neuroneId,
+        $sinapsiId,
+        $famigliaId,
+        $importo,
+        $tipoTransazione,
+        $dataVendita,
+        $descrizione,
+        $user['user_id']
+    ]);
+
+    return [
+        'success' => true,
+        'message' => "Vendita di € " . number_format($importo, 2, ',', '.') . " registrata per '{$entity['nome']}'",
+        'sale_id' => $id,
+        'importo' => $importo,
+        'entity_name' => $entity['nome']
+    ];
+}
+
+/**
+ * Tool: Crea nota su un'entità
+ */
+function tool_createNote(PDO $db, array $input, array $user): array {
+    $neuroneId = $input['entity_id'] ?? $input['neurone_id'] ?? '';
+    $testo = $input['testo'] ?? $input['contenuto'] ?? $input['content'] ?? '';
+
+    if (empty($neuroneId)) {
+        return ['error' => 'entity_id richiesto'];
+    }
+
+    if (empty($testo)) {
+        return ['error' => 'Testo della nota richiesto'];
+    }
+
+    // Verifica entità
+    $stmt = $db->prepare("SELECT id, nome FROM neuroni WHERE id = ?");
+    $stmt->execute([$neuroneId]);
+    $entity = $stmt->fetch(PDO::FETCH_ASSOC);
+
+    if (!$entity) {
+        return ['error' => 'Entità non trovata'];
+    }
+
+    // Controlla se esiste già una nota per questo utente/neurone
+    $stmt = $db->prepare('SELECT id FROM note_personali WHERE utente_id = ? AND neurone_id = ?');
+    $stmt->execute([$user['user_id'], $neuroneId]);
+    $existing = $stmt->fetch(PDO::FETCH_ASSOC);
+
+    if ($existing) {
+        // Aggiorna nota esistente
+        $stmt = $db->prepare('UPDATE note_personali SET testo = ? WHERE id = ?');
+        $stmt->execute([$testo, $existing['id']]);
+
+        return [
+            'success' => true,
+            'message' => "Nota aggiornata per '{$entity['nome']}'",
+            'note_id' => $existing['id'],
+            'action' => 'updated'
+        ];
+    }
+
+    // Crea nuova nota
+    $id = sprintf('%04x%04x-%04x-%04x-%04x-%04x%04x%04x',
+        mt_rand(0, 0xffff), mt_rand(0, 0xffff),
+        mt_rand(0, 0xffff),
+        mt_rand(0, 0x0fff) | 0x4000,
+        mt_rand(0, 0x3fff) | 0x8000,
+        mt_rand(0, 0xffff), mt_rand(0, 0xffff), mt_rand(0, 0xffff)
+    );
+
+    $stmt = $db->prepare('INSERT INTO note_personali (id, utente_id, neurone_id, testo) VALUES (?, ?, ?, ?)');
+    $stmt->execute([$id, $user['user_id'], $neuroneId, $testo]);
+
+    return [
+        'success' => true,
+        'message' => "Nota aggiunta a '{$entity['nome']}'",
+        'note_id' => $id,
+        'action' => 'created'
+    ];
+}
+
+// ============================================================
+// TOOL DI ELIMINAZIONE
+// ============================================================
+
+/**
+ * Tool: Elimina un'entità (neurone)
+ */
+function tool_deleteEntity(PDO $db, array $input, array $user): array {
+    $entityId = $input['entity_id'] ?? '';
+
+    if (empty($entityId)) {
+        return ['error' => 'entity_id richiesto'];
+    }
+
+    // Verifica che l'entità esista e appartenga all'azienda
+    $stmt = $db->prepare("SELECT id, nome FROM neuroni WHERE id = ? AND azienda_id = ?");
+    $stmt->execute([$entityId, $user['azienda_id']]);
+    $entity = $stmt->fetch(PDO::FETCH_ASSOC);
+
+    if (!$entity) {
+        return ['error' => 'Entita non trovata o non accessibile'];
+    }
+
+    $nome = $entity['nome'];
+
+    // Elimina in cascata: vendite, sinapsi, note
+    $db->prepare("DELETE FROM vendite_prodotto WHERE neurone_id = ?")->execute([$entityId]);
+    $db->prepare("DELETE FROM sinapsi WHERE neurone_da = ? OR neurone_a = ?")->execute([$entityId, $entityId]);
+    $db->prepare("DELETE FROM note_personali WHERE neurone_id = ?")->execute([$entityId]);
+
+    // Elimina l'entità
+    $db->prepare("DELETE FROM neuroni WHERE id = ? AND azienda_id = ?")->execute([$entityId, $user['azienda_id']]);
+
+    return [
+        'success' => true,
+        'message' => "Entita '$nome' eliminata con tutte le sue connessioni e transazioni",
+        // Azione frontend: ricarica neuroni per rimuovere l'entità dalla mappa
+        '_frontend_action' => [
+            'type' => 'refresh_neuroni'
+        ]
+    ];
+}
+
+/**
+ * Tool: Elimina una connessione (sinapsi)
+ */
+function tool_deleteConnection(PDO $db, array $input, array $user): array {
+    $sinapsiId = $input['sinapsi_id'] ?? $input['connection_id'] ?? '';
+
+    if (empty($sinapsiId)) {
+        return ['error' => 'sinapsi_id richiesto'];
+    }
+
+    // Verifica che la sinapsi esista
+    $stmt = $db->prepare("SELECT id FROM sinapsi WHERE id = ? AND azienda_id = ?");
+    $stmt->execute([$sinapsiId, $user['azienda_id']]);
+    if (!$stmt->fetch()) {
+        return ['error' => 'Connessione non trovata o non accessibile'];
+    }
+
+    // Elimina vendite associate
+    $db->prepare("DELETE FROM vendite_prodotto WHERE sinapsi_id = ?")->execute([$sinapsiId]);
+
+    // Elimina la sinapsi
+    $db->prepare("DELETE FROM sinapsi WHERE id = ? AND azienda_id = ?")->execute([$sinapsiId, $user['azienda_id']]);
+
+    return [
+        'success' => true,
+        'message' => 'Connessione eliminata con successo'
+    ];
+}
+
+/**
+ * Tool: Elimina una vendita
+ */
+function tool_deleteSale(PDO $db, array $input, array $user): array {
+    $saleId = $input['sale_id'] ?? '';
+
+    if (empty($saleId)) {
+        return ['error' => 'sale_id richiesto'];
+    }
+
+    // Verifica che la vendita esista
+    $stmt = $db->prepare("SELECT id, importo FROM vendite_prodotto WHERE id = ? AND azienda_id = ?");
+    $stmt->execute([$saleId, $user['azienda_id']]);
+    $sale = $stmt->fetch(PDO::FETCH_ASSOC);
+
+    if (!$sale) {
+        return ['error' => 'Vendita non trovata o non accessibile'];
+    }
+
+    $db->prepare("DELETE FROM vendite_prodotto WHERE id = ? AND azienda_id = ?")->execute([$saleId, $user['azienda_id']]);
+
+    return [
+        'success' => true,
+        'message' => 'Vendita di ' . number_format($sale['importo'], 2, ',', '.') . ' euro eliminata'
+    ];
+}
+
+// ============================================================
+// TOOL MAPPA - Azioni per controllare la visualizzazione
+// ============================================================
+
+/**
+ * Tool: Sposta la vista della mappa a coordinate specifiche
+ */
+function tool_mapFlyTo(array $input): array {
+    $lat = $input['lat'] ?? null;
+    $lng = $input['lng'] ?? null;
+    $zoom = $input['zoom'] ?? 15;
+    $pitch = $input['pitch'] ?? 60;
+    $bearing = $input['bearing'] ?? 0;
+
+    if ($lat === null || $lng === null) {
+        return ['error' => 'lat e lng sono richiesti'];
+    }
+
+    return [
+        'success' => true,
+        'message' => "Mappa spostata a ($lat, $lng) zoom=$zoom pitch=$pitch bearing=$bearing",
+        // Coordinate per memoria contesto (extractKeyInfo)
+        'lat' => (float)$lat,
+        'lng' => (float)$lng,
+        'zoom' => (float)$zoom,
+        '_frontend_action' => [
+            'type' => 'map_fly_to',
+            'lat' => (float)$lat,
+            'lng' => (float)$lng,
+            'zoom' => (float)$zoom,
+            'pitch' => (float)$pitch,
+            'bearing' => (float)$bearing
+        ]
+    ];
+}
+
+/**
+ * Tool UNIFICATO: Gestisce marker sulla mappa (place/remove/clear)
+ */
+function tool_mapMarker(array $input): array {
+    $action = $input['action'] ?? 'place';
+
+    switch ($action) {
+        case 'place':
+            $lat = $input['lat'] ?? null;
+            $lng = $input['lng'] ?? null;
+            $label = $input['label'] ?? 'Segnaposto';
+            $color = $input['color'] ?? 'red';
+            $flyTo = $input['fly_to'] ?? false;
+
+            if ($lat === null || $lng === null) {
+                return ['error' => 'lat e lng sono richiesti per action=place'];
+            }
+
+            $validColors = ['red', 'blue', 'green', 'orange', 'purple', 'yellow'];
+            if (!in_array($color, $validColors)) {
+                $color = 'red';
+            }
+
+            return [
+                'success' => true,
+                'message' => "Marker '$label' piazzato a ($lat, $lng)" . ($flyTo ? " (volo alla posizione)" : ""),
+                '_frontend_action' => [
+                    'type' => 'map_place_marker',
+                    'lat' => (float)$lat,
+                    'lng' => (float)$lng,
+                    'label' => $label,
+                    'color' => $color,
+                    'fly_to' => (bool)$flyTo
+                ]
+            ];
+
+        case 'remove':
+            $markerId = $input['marker_id'] ?? null;
+            if (!$markerId) {
+                return ['error' => 'marker_id è richiesto per action=remove'];
+            }
+            return [
+                'success' => true,
+                'message' => "Rimozione marker $markerId",
+                '_frontend_action' => [
+                    'type' => 'map_remove_marker',
+                    'marker_id' => $markerId
+                ]
+            ];
+
+        case 'clear':
+            return [
+                'success' => true,
+                'message' => "Rimozione di tutti i marker dalla mappa",
+                '_frontend_action' => [
+                    'type' => 'map_clear_markers'
+                ]
+            ];
+
+        default:
+            return ['error' => "Azione non valida: $action. Usa place, remove o clear"];
+    }
+}
+
+// BACKWARD COMPATIBILITY: Vecchi tool che chiamano quello nuovo
+function tool_mapPlaceMarker(array $input): array {
+    $input['action'] = 'place';
+    return tool_mapMarker($input);
+}
+
+function tool_mapRemoveMarker(array $input): array {
+    $input['action'] = 'remove';
+    return tool_mapMarker($input);
+}
+
+function tool_mapClearMarkers(array $input): array {
+    $input['action'] = 'clear';
+    return tool_mapMarker($input);
+}
+
+/**
+ * Tool: Cambia lo stile visivo della mappa
+ */
+function tool_mapSetStyle(array $input): array {
+    $style = $input['style'] ?? 'streets-v12';
+
+    $validStyles = ['streets-v12', 'satellite-v9', 'satellite-streets-v12', 'outdoors-v12', 'light-v11', 'dark-v11'];
+    if (!in_array($style, $validStyles)) {
+        return ['error' => "Stile non valido. Usa: " . implode(', ', $validStyles)];
+    }
+
+    $styleNames = [
+        'streets-v12' => 'Strade',
+        'satellite-v9' => 'Satellite',
+        'satellite-streets-v12' => 'Satellite con strade',
+        'outdoors-v12' => 'Terreno',
+        'light-v11' => 'Chiaro',
+        'dark-v11' => 'Scuro/Notte'
+    ];
+
+    return [
+        'success' => true,
+        'message' => "Stile mappa cambiato in: " . ($styleNames[$style] ?? $style),
+        '_frontend_action' => [
+            'type' => 'map_set_style',
+            'style' => $style
+        ]
+    ];
+}
+
+/**
+ * Tool: Seleziona un'entità sulla mappa
+ */
+function tool_mapSelectEntity(PDO $db, array $input, array $user): array {
+    $entityId = $input['entity_id'] ?? '';
+
+    if (empty($entityId)) {
+        return ['error' => 'entity_id richiesto'];
+    }
+
+    // Verifica che l'entità esista e recupera coordinate
+    $stmt = $db->prepare("SELECT id, nome, lat, lng FROM neuroni WHERE id = ? AND azienda_id = ?");
+    $stmt->execute([$entityId, $user['azienda_id']]);
+    $entity = $stmt->fetch(PDO::FETCH_ASSOC);
+
+    if (!$entity) {
+        return ['error' => 'Entita non trovata o non accessibile'];
+    }
+
+    return [
+        'success' => true,
+        'message' => "Selezionata entita '{$entity['nome']}'",
+        // Info per memoria contesto (extractKeyInfo)
+        'entity_id' => $entityId,
+        'entity_name' => $entity['nome'],
+        '_frontend_action' => [
+            'type' => 'map_select_entity',
+            'entity_id' => $entityId,
+            'lat' => (float)$entity['lat'],
+            'lng' => (float)$entity['lng'],
+            'entity_name' => $entity['nome']
+        ]
+    ];
+}
+
+/**
+ * Tool: Mostra le connessioni di un'entità
+ */
+function tool_mapShowConnections(PDO $db, array $input, array $user): array {
+    $entityId = $input['entity_id'] ?? '';
+
+    if (empty($entityId)) {
+        return ['error' => 'entity_id richiesto'];
+    }
+
+    // Verifica che l'entità esista
+    $stmt = $db->prepare("SELECT id, nome FROM neuroni WHERE id = ? AND azienda_id = ?");
+    $stmt->execute([$entityId, $user['azienda_id']]);
+    $entity = $stmt->fetch(PDO::FETCH_ASSOC);
+
+    if (!$entity) {
+        return ['error' => 'Entita non trovata o non accessibile'];
+    }
+
+    // Conta connessioni
+    $stmt = $db->prepare("SELECT COUNT(*) as cnt FROM sinapsi WHERE (neurone_da = ? OR neurone_a = ?) AND azienda_id = ?");
+    $stmt->execute([$entityId, $entityId, $user['azienda_id']]);
+    $count = $stmt->fetch(PDO::FETCH_ASSOC)['cnt'];
+
+    return [
+        'success' => true,
+        'message' => "Mostrate $count connessioni di '{$entity['nome']}'",
+        '_frontend_action' => [
+            'type' => 'map_show_connections',
+            'entity_id' => $entityId,
+            'entity_name' => $entity['nome']
+        ]
+    ];
+}
+
+// ============================================================
+// TOOL UI - Azioni per controllare l'interfaccia
+// ============================================================
+
+/**
+ * Tool: Apre un pannello dell'interfaccia
+ */
+function tool_uiOpenPanel(array $input): array {
+    $panel = $input['panel'] ?? '';
+    $entityId = $input['entity_id'] ?? null;
+
+    $validPanels = ['entity_detail', 'connection_detail', 'settings', 'families'];
+    if (!in_array($panel, $validPanels)) {
+        return ['error' => 'Pannello non valido. Usa: ' . implode(', ', $validPanels)];
+    }
+
+    return [
+        'success' => true,
+        'message' => "Aperto pannello $panel",
+        '_frontend_action' => [
+            'type' => 'ui_open_panel',
+            'panel' => $panel,
+            'entity_id' => $entityId
+        ]
+    ];
+}
+
+/**
+ * Tool: Mostra una notifica all'utente
+ */
+function tool_uiShowNotification(array $input): array {
+    $message = $input['message'] ?? '';
+    $type = $input['type'] ?? 'info';
+
+    if (empty($message)) {
+        return ['error' => 'message richiesto'];
+    }
+
+    $validTypes = ['success', 'error', 'warning', 'info'];
+    if (!in_array($type, $validTypes)) {
+        $type = 'info';
+    }
+
+    return [
+        'success' => true,
+        'message' => 'Notifica mostrata',
+        '_frontend_action' => [
+            'type' => 'ui_notification',
+            'notification_message' => $message,
+            'notification_type' => $type
+        ]
+    ];
+}
+
+/**
+ * Tool: Esegue un'azione UI registrata dai componenti React
+ *
+ * Le azioni disponibili sono registrate dinamicamente dai componenti usando
+ * useAiAction() e vengono passate nel contesto come parte di uiState.
+ *
+ * L'AI vede le azioni disponibili nel contesto e può eseguirle chiamando questo tool.
+ * Il frontend (AiChat.tsx) riceve l'azione e la esegue chiamando executeAction().
+ */
+function tool_uiInteract(array $input): array {
+    $actionId = $input['action_id'] ?? null;
+    $params = $input['params'] ?? [];
+
+    if (empty($actionId)) {
+        return ['error' => 'action_id richiesto. Controlla la sezione AZIONI DISPONIBILI nel contesto UI.'];
+    }
+
+    // L'azione viene eseguita dal frontend (non dal backend)
+    // Ritorniamo un _frontend_action che AiChat.tsx gestirà
+    return [
+        'success' => true,
+        'message' => "Eseguo azione UI: $actionId",
+        '_frontend_action' => [
+            'type' => 'ui_action',
+            'action_id' => $actionId,
+            'action_params' => $params
+        ]
+    ];
+}
+
+// ============================================================
+// TOOL AUTONOMIA - L'AI esplora il codice e impara
+// ============================================================
+
+/**
+ * Tool: Esplora il codice sorgente del progetto
+ * L'AI può leggere file per capire come funziona il software
+ */
+function tool_exploreCode(array $input): array {
+    $path = $input['path'] ?? '';
+    $search = $input['search'] ?? '';
+
+    // Directory base del progetto (2 livelli sopra api/ai/)
+    $baseDir = realpath(__DIR__ . '/../../..');
+
+    if (empty($path) && empty($search)) {
+        // Mostra struttura progetto
+        $structure = [
+            'frontend/' => 'Codice React/TypeScript dell\'interfaccia',
+            'frontend/src/components/' => 'Componenti UI (MapView, AiChat, ecc.)',
+            'frontend/src/pages/' => 'Pagine principali (Dashboard)',
+            'frontend/src/utils/' => 'Utility e API client',
+            'backend/api/' => 'Endpoint PHP',
+            'backend/api/ai/' => 'Chat AI e tools',
+            'backend/config/' => 'Configurazione e prompt AI',
+            'docs/' => 'Documentazione'
+        ];
+        return [
+            'success' => true,
+            'message' => 'Struttura progetto GenAgenta',
+            'structure' => $structure,
+            'hint' => 'Usa path per leggere un file specifico, o search per cercare nel codice'
+        ];
+    }
+
+    // Ricerca nel codice
+    if (!empty($search)) {
+        $results = [];
+        $searchDirs = ['frontend/src', 'backend/api', 'backend/config'];
+
+        foreach ($searchDirs as $dir) {
+            $fullDir = $baseDir . '/' . $dir;
+            if (!is_dir($fullDir)) continue;
+
+            $iterator = new RecursiveIteratorIterator(
+                new RecursiveDirectoryIterator($fullDir, RecursiveDirectoryIterator::SKIP_DOTS)
+            );
+
+            foreach ($iterator as $file) {
+                if (!$file->isFile()) continue;
+                $ext = $file->getExtension();
+                if (!in_array($ext, ['php', 'ts', 'tsx', 'js', 'jsx', 'txt', 'json'])) continue;
+
+                $content = file_get_contents($file->getPathname());
+                if (stripos($content, $search) !== false) {
+                    $relativePath = str_replace($baseDir . '/', '', $file->getPathname());
+                    $relativePath = str_replace('\\', '/', $relativePath);
+
+                    // Trova le righe che contengono il termine
+                    $lines = explode("\n", $content);
+                    $matches = [];
+                    foreach ($lines as $num => $line) {
+                        if (stripos($line, $search) !== false) {
+                            $matches[] = ['line' => $num + 1, 'content' => trim(substr($line, 0, 100))];
+                            if (count($matches) >= 3) break;
+                        }
+                    }
+
+                    $results[] = [
+                        'file' => $relativePath,
+                        'matches' => $matches
+                    ];
+
+                    if (count($results) >= 10) break 2;
+                }
+            }
+        }
+
+        return [
+            'success' => true,
+            'search_term' => $search,
+            'results' => $results,
+            'hint' => 'Usa path per leggere il contenuto completo di un file'
+        ];
+    }
+
+    // Lettura file specifico
+    $path = str_replace('\\', '/', $path);
+    $path = ltrim($path, '/');
+
+    // Sicurezza: impedisci path traversal
+    if (strpos($path, '..') !== false) {
+        return ['error' => 'Path non valido'];
+    }
+
+    // Solo certi tipi di file
+    $allowedExtensions = ['php', 'ts', 'tsx', 'js', 'jsx', 'txt', 'json', 'md', 'css'];
+    $ext = pathinfo($path, PATHINFO_EXTENSION);
+    if (!in_array($ext, $allowedExtensions)) {
+        return ['error' => 'Tipo file non permesso. Estensioni valide: ' . implode(', ', $allowedExtensions)];
+    }
+
+    $fullPath = $baseDir . '/' . $path;
+    if (!file_exists($fullPath)) {
+        return ['error' => "File non trovato: $path"];
+    }
+
+    $content = file_get_contents($fullPath);
+
+    // Limita dimensione output
+    if (strlen($content) > 15000) {
+        $content = substr($content, 0, 15000) . "\n\n... [TRONCATO - file troppo lungo] ...";
+    }
+
+    return [
+        'success' => true,
+        'file' => $path,
+        'content' => $content,
+        'lines' => substr_count($content, "\n") + 1
+    ];
+}
+
+/**
+ * Tool: Salva una scoperta/apprendimento dell'AI
+ */
+function tool_saveLearning(array $input, array $user): array {
+    $category = $input['category'] ?? 'general';
+    $title = $input['title'] ?? '';
+    $content = $input['content'] ?? '';
+
+    if (empty($title) || empty($content)) {
+        return ['error' => 'title e content sono richiesti'];
+    }
+
+    $knowledgeFile = __DIR__ . '/../../config/ai_knowledge.json';
+
+    // Carica conoscenze esistenti
+    $knowledge = [];
+    if (file_exists($knowledgeFile)) {
+        $knowledge = json_decode(file_get_contents($knowledgeFile), true) ?? [];
+    }
+
+    // Aggiungi nuova conoscenza
+    $id = uniqid('learn_');
+    $knowledge[$id] = [
+        'category' => $category,
+        'title' => $title,
+        'content' => $content,
+        'learned_at' => date('Y-m-d H:i:s'),
+        'learned_by' => $user['nome'] ?? 'unknown'
+    ];
+
+    // Salva
+    file_put_contents($knowledgeFile, json_encode($knowledge, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
+
+    return [
+        'success' => true,
+        'message' => "Ho memorizzato: '$title'",
+        'learning_id' => $id
+    ];
+}
+
+/**
+ * Tool: Legge le conoscenze memorizzate
+ */
+function tool_readLearnings(array $user): array {
+    $knowledgeFile = __DIR__ . '/../../config/ai_knowledge.json';
+
+    if (!file_exists($knowledgeFile)) {
+        return [
+            'success' => true,
+            'message' => 'Nessuna conoscenza memorizzata ancora',
+            'learnings' => []
+        ];
+    }
+
+    $knowledge = json_decode(file_get_contents($knowledgeFile), true) ?? [];
+
+    // Raggruppa per categoria (salta metadati che iniziano con _)
+    $byCategory = [];
+    $count = 0;
+    foreach ($knowledge as $id => $item) {
+        // Salta chiavi di metadati
+        if (strpos($id, '_') === 0) continue;
+        // Salta item senza i campi necessari
+        if (!isset($item['title']) || !isset($item['content'])) continue;
+
+        $cat = $item['category'] ?? 'general';
+        if (!isset($byCategory[$cat])) {
+            $byCategory[$cat] = [];
+        }
+        $byCategory[$cat][] = [
+            'id' => $id,
+            'title' => $item['title'],
+            'content' => $item['content']
+        ];
+        $count++;
+    }
+
+    return [
+        'success' => true,
+        'message' => $count > 0 ? 'Ecco le mie conoscenze memorizzate' : 'Nessuna conoscenza memorizzata ancora',
+        'learnings' => $byCategory,
+        'total' => $count
+    ];
+}
+
+/**
+ * Tool: Propone un miglioramento al software
+ * Formatta la proposta in modo che possa essere implementata
+ */
+function tool_proposeImprovement(array $input, array $user): array {
+    $title = $input['title'] ?? '';
+    $description = $input['description'] ?? '';
+    $files_to_modify = $input['files_to_modify'] ?? [];
+    $code_changes = $input['code_changes'] ?? '';
+    $priority = $input['priority'] ?? 'normal'; // low, normal, high
+
+    if (empty($title) || empty($description)) {
+        return ['error' => 'title e description sono richiesti'];
+    }
+
+    $proposalsFile = __DIR__ . '/../../config/ai_proposals.json';
+
+    // Carica proposte esistenti
+    $proposals = [];
+    if (file_exists($proposalsFile)) {
+        $proposals = json_decode(file_get_contents($proposalsFile), true) ?? [];
+    }
+
+    // Aggiungi nuova proposta
+    $id = 'prop_' . date('Ymd_His');
+    $proposals[$id] = [
+        'title' => $title,
+        'description' => $description,
+        'files_to_modify' => $files_to_modify,
+        'code_changes' => $code_changes,
+        'priority' => $priority,
+        'status' => 'pending', // pending, approved, rejected, implemented
+        'proposed_at' => date('Y-m-d H:i:s'),
+        'proposed_during_chat_with' => $user['nome'] ?? 'unknown'
+    ];
+
+    // Salva
+    file_put_contents($proposalsFile, json_encode($proposals, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
+
+    // Formatta messaggio per l'utente
+    $message = "📝 **PROPOSTA DI MIGLIORAMENTO**\n\n";
+    $message .= "**{$title}**\n\n";
+    $message .= "{$description}\n\n";
+
+    if (!empty($files_to_modify)) {
+        $message .= "**File da modificare:**\n";
+        foreach ($files_to_modify as $file) {
+            $message .= "- {$file}\n";
+        }
+        $message .= "\n";
+    }
+
+    if (!empty($code_changes)) {
+        $message .= "**Modifiche suggerite:**\n```\n{$code_changes}\n```\n\n";
+    }
+
+    $message .= "Per implementare questa proposta, chiedi a Claude Code di farlo!";
+
+    return [
+        'success' => true,
+        'message' => $message,
+        'proposal_id' => $id,
+        '_frontend_action' => [
+            'type' => 'ui_notification',
+            'notification_message' => "Nuova proposta AI: {$title}",
+            'notification_type' => 'info'
+        ]
+    ];
+}
+
+// ==========================================
+// TOOL FILE SYSTEM - Lazy loading e memoria
+// ==========================================
+
+/**
+ * Tool: Legge un file
+ * Sicurezza: solo file in backend/config/ai/
+ */
+function tool_readFile(array $input): array {
+    $path = $input['path'] ?? '';
+
+    // Sicurezza: solo file in backend/config/ai/
+    $basePath = realpath(__DIR__ . '/../../config/ai');
+    if (!$basePath) {
+        return ['error' => 'Cartella AI non trovata'];
+    }
+
+    // Normalizza path: l'AI può usare vari formati
+    $path = ltrim($path, '/');
+
+    // Rimuovi "backend/" se presente
+    if (str_starts_with($path, 'backend/')) {
+        $path = substr($path, 8);
+    }
+
+    // Mappa "docs/" → "config/ai/docs/" (shortcut per comodità)
+    if (str_starts_with($path, 'docs/')) {
+        $path = 'config/ai/' . $path;
+    }
+
+    // Mappa "memory/" → "config/ai/memory/" (shortcut)
+    if (str_starts_with($path, 'memory/')) {
+        $path = 'config/ai/' . $path;
+    }
+
+    // Costruisci path completo (relativo a backend/)
+    $fullPath = __DIR__ . '/../../' . $path;
+    $realFullPath = realpath($fullPath);
+
+    // Verifica che sia dentro backend/config/ai/
+    if (!$realFullPath || !str_starts_with($realFullPath, $basePath)) {
+        return ['error' => "Accesso negato: puoi leggere solo file in config/ai/. Path ricevuto: $path"];
+    }
+
+    if (!file_exists($realFullPath)) {
+        return ['error' => "File non trovato: $path"];
+    }
+
+    $content = file_get_contents($realFullPath);
+    if ($content === false) {
+        return ['error' => "Impossibile leggere: $path"];
+    }
+
+    return [
+        'success' => true,
+        'path' => $path,
+        'content' => $content,
+        'size' => strlen($content)
+    ];
+}
+
+/**
+ * Tool: Scrive un file nella cartella memoria
+ * Sicurezza: solo in backend/config/ai/memory/
+ */
+function tool_writeFile(array $input): array {
+    $filename = $input['filename'] ?? '';
+    $content = $input['content'] ?? '';
+
+    // Validazione filename
+    if (empty($filename) || str_contains($filename, '..') || str_contains($filename, '/')) {
+        return ['error' => 'Nome file non valido'];
+    }
+
+    // Solo nella cartella memory
+    $memoryPath = __DIR__ . '/../../config/ai/memory';
+    if (!is_dir($memoryPath)) {
+        mkdir($memoryPath, 0755, true);
+    }
+
+    $fullPath = $memoryPath . '/' . $filename;
+
+    if (file_put_contents($fullPath, $content) === false) {
+        return ['error' => "Impossibile scrivere: $filename"];
+    }
+
+    return [
+        'success' => true,
+        'path' => "backend/config/ai/memory/$filename",
+        'message' => "File salvato: $filename",
+        'size' => strlen($content)
+    ];
+}
+
+/**
+ * Tool: Lista file in una cartella
+ * Sicurezza: solo in backend/config/ai/
+ */
+function tool_listFiles(array $input): array {
+    $path = $input['path'] ?? 'config/ai';
+
+    // Sicurezza: solo in backend/config/ai/
+    $basePath = realpath(__DIR__ . '/../../config/ai');
+    if (!$basePath) {
+        return ['error' => 'Cartella AI non trovata'];
+    }
+
+    // Normalizza path: rimuovi "backend/" se presente all'inizio
+    $path = ltrim($path, '/');
+    if (str_starts_with($path, 'backend/')) {
+        $path = substr($path, 8); // Rimuovi "backend/"
+    }
+
+    // Costruisci path completo (relativo a backend/)
+    $fullPath = __DIR__ . '/../../' . $path;
+    $realFullPath = realpath($fullPath);
+
+    if (!$realFullPath || !str_starts_with($realFullPath, $basePath)) {
+        return ['error' => "Accesso negato: puoi vedere solo config/ai/. Path ricevuto: $path"];
+    }
+
+    if (!is_dir($realFullPath)) {
+        return ['error' => "Cartella non trovata: $path"];
+    }
+
+    $files = [];
+    foreach (scandir($realFullPath) as $file) {
+        if ($file === '.' || $file === '..') continue;
+
+        $filePath = $realFullPath . '/' . $file;
+        $files[] = [
+            'name' => $file,
+            'type' => is_dir($filePath) ? 'directory' : 'file',
+            'size' => is_file($filePath) ? filesize($filePath) : null
+        ];
+    }
+
+    return [
+        'success' => true,
+        'path' => $path,
+        'files' => $files,
+        'count' => count($files)
+    ];
+}
+
+// ============================================================
+// TOOL PRINCIPALE: CALL_API
+// Permette all'AI di chiamare qualsiasi API del sistema
+// ============================================================
+
+/**
+ * Tool: Chiama un'API del sistema
+ * L'AI può usare le stesse API che usa il frontend
+ * USA CHIAMATA HTTP per evitare che exit() uccida lo script
+ */
+function tool_callApi(array $input, array $user): array {
+    $method = strtoupper($input['method'] ?? 'GET');
+    $endpoint = $input['endpoint'] ?? '';
+    $body = $input['body'] ?? [];
+
+    if (empty($endpoint)) {
+        return ['error' => 'endpoint richiesto. Usa read_file("docs/API_INDEX.md") per vedere le API disponibili.'];
+    }
+
+    // Valida metodo
+    if (!in_array($method, ['GET', 'POST', 'PUT', 'DELETE'])) {
+        return ['error' => 'Metodo non valido. Usa: GET, POST, PUT, DELETE'];
+    }
+
+    // Pulisci endpoint - rimuovi qualsiasi prefisso obsoleto
+    $endpoint = ltrim($endpoint, '/');
+    // NOTA: api_v2 NON ESISTE PIÙ - tutto è unificato in /api/
+    // Se l'AI usa v2/ o api_v2/, rimuovilo silenziosamente
+    $endpoint = preg_replace('/^(v2|api_v2|api)\//', '', $endpoint);
+
+    // Base URL unificata - tutte le API passano da qui
+    $baseUrl = 'https://www.gruppogea.net/genagenta/backend/api/index.php/';
+
+    // Costruisci URL completo
+    $url = $baseUrl . $endpoint;
+
+    // Per GET, aggiungi parametri alla query string
+    if ($method === 'GET' && !empty($body)) {
+        $url .= '?' . http_build_query($body);
+    }
+
+    // Prepara headers con token utente
+    $token = $_SERVER['HTTP_AUTHORIZATION'] ?? '';
+    $headers = [
+        'Content-Type: application/json',
+        'Authorization: ' . $token
+    ];
+
+    // Chiamata HTTP
+    $ch = curl_init($url);
+    curl_setopt_array($ch, [
+        CURLOPT_CUSTOMREQUEST => $method,
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_HTTPHEADER => $headers,
+        CURLOPT_TIMEOUT => 30,
+        CURLOPT_SSL_VERIFYPEER => false,
+        CURLOPT_FOLLOWLOCATION => true, // Segui redirect 301/302
+        CURLOPT_MAXREDIRS => 3,
+    ]);
+
+    // Per POST/PUT/DELETE, aggiungi body
+    if ($method !== 'GET' && !empty($body)) {
+        curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($body));
+    }
+
+    $response = curl_exec($ch);
+    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $curlError = curl_error($ch);
+    curl_close($ch);
+
+    if ($curlError) {
+        return ['error' => 'Errore connessione API: ' . $curlError];
+    }
+
+    // Parse risposta JSON
+    $result = json_decode($response, true);
+    if ($result === null) {
+        return [
+            'error' => 'Risposta API non valida',
+            'http_code' => $httpCode,
+            'raw' => substr($response, 0, 500)
+        ];
+    }
+
+    // Aggiungi info sulla chiamata
+    $result['_api_call'] = [
+        'method' => $method,
+        'endpoint' => $endpoint,
+        'http_code' => $httpCode
+    ];
+
+    // Estrai resource dal path
+    $pathParts = explode('/', $endpoint);
+    $resource = $pathParts[0] ?? '';
+
+    // Se è una operazione di scrittura, aggiungi refresh_neuroni
+    if (in_array($method, ['POST', 'PUT', 'DELETE']) && in_array($resource, ['neuroni', 'sinapsi'])) {
+        $result['_frontend_action'] = ['type' => 'refresh_neuroni'];
+    }
+
+    return $result;
+}
+
+// ============================================================
+// TOOL CONTESTO UTENTE - Lazy loading delle azioni utente
+// ============================================================
+
+/**
+ * Tool: Ottiene le ultime azioni dell'utente nell'interfaccia
+ * Le azioni vengono passate dal frontend nel context e salvate in $GLOBALS['ai_user_actions']
+ */
+function tool_getUserActions(): array {
+    $actions = $GLOBALS['ai_user_actions'] ?? [];
+
+    if (empty($actions)) {
+        return [
+            'success' => true,
+            'message' => 'Nessuna azione recente registrata',
+            'actions' => [],
+            'count' => 0
+        ];
+    }
+
+    // Formatta le azioni per una lettura più facile
+    $formattedActions = [];
+    foreach ($actions as $action) {
+        $formatted = [
+            'tipo' => $action['type'] ?? 'unknown',
+            'quando' => $action['timestamp'] ?? 'unknown'
+        ];
+
+        $data = $action['data'] ?? [];
+
+        switch ($action['type'] ?? '') {
+            case 'map_click':
+                $formatted['descrizione'] = sprintf(
+                    'Click sulla mappa in posizione (%.4f, %.4f)',
+                    $data['lat'] ?? 0,
+                    $data['lng'] ?? 0
+                );
+                break;
+
+            case 'select_entity':
+                $formatted['descrizione'] = sprintf(
+                    'Selezionata entità "%s" (tipo: %s, id: %s)',
+                    $data['entityName'] ?? 'sconosciuto',
+                    $data['entityType'] ?? 'sconosciuto',
+                    $data['entityId'] ?? ''
+                );
+                $formatted['entity_id'] = $data['entityId'] ?? null;
+                break;
+
+            case 'deselect':
+                $formatted['descrizione'] = 'Deselezionata entità (click su zona vuota o chiusura pannello)';
+                break;
+
+            case 'filter_change':
+                $formatted['descrizione'] = sprintf(
+                    'Cambiato filtro "%s" a "%s"',
+                    $data['filterName'] ?? 'sconosciuto',
+                    $data['filterValue'] ?? 'vuoto'
+                );
+                break;
+
+            case 'map_move':
+                $center = $data['center'] ?? [];
+                $formatted['descrizione'] = sprintf(
+                    'Spostata mappa a (%.4f, %.4f) zoom %s',
+                    $center['lat'] ?? 0,
+                    $center['lng'] ?? 0,
+                    $data['zoom'] ?? 'sconosciuto'
+                );
+                break;
+
+            case 'panel_open':
+                $formatted['descrizione'] = sprintf('Aperto pannello "%s"', $data['panelName'] ?? 'sconosciuto');
+                break;
+
+            case 'panel_close':
+                $formatted['descrizione'] = sprintf('Chiuso pannello "%s"', $data['panelName'] ?? 'sconosciuto');
+                break;
+
+            default:
+                $formatted['descrizione'] = 'Azione sconosciuta';
+                $formatted['data'] = $data;
+        }
+
+        $formattedActions[] = $formatted;
+    }
+
+    return [
+        'success' => true,
+        'message' => 'Ultime ' . count($actions) . ' azioni dell\'utente',
+        'actions' => $formattedActions,
+        'count' => count($actions),
+        'hint' => 'L\'azione più recente è l\'ultima della lista'
+    ];
+}
+
+
+// ============================================================================
+// TOOL MEMORIA AGEA - Memoria strutturata persistente
+// ============================================================================
+
+define('AGEA_MEMORY_PATH', __DIR__ . '/../../config/ai/agea_memory.json');
+
+/**
+ * Legge la memoria di Agea
+ */
+function tool_ageaReadMemory(): array {
+    if (!file_exists(AGEA_MEMORY_PATH)) {
+        return [
+            'success' => true,
+            'memory' => [
+                'utente' => ['interessi_recenti' => [], 'argomenti_frequenti' => [], 'ultimo_argomento' => null],
+                'entita_importanti' => [],
+                'conversazioni_chiave' => [],
+                'insights_salvati' => []
+            ],
+            'message' => 'Memoria vuota - prima sessione'
+        ];
+    }
+
+    $content = file_get_contents(AGEA_MEMORY_PATH);
+    $memory = json_decode($content, true);
+
+    if (json_last_error() !== JSON_ERROR_NONE) {
+        return ['error' => 'Errore lettura memoria: ' . json_last_error_msg()];
+    }
+
+    return [
+        'success' => true,
+        'memory' => $memory,
+        'message' => 'Memoria caricata'
+    ];
+}
+
+/**
+ * Aggiorna campi specifici della memoria di Agea
+ */
+function tool_ageaUpdateMemory(array $input): array {
+    // Leggi memoria corrente
+    $memory = [];
+    if (file_exists(AGEA_MEMORY_PATH)) {
+        $content = file_get_contents(AGEA_MEMORY_PATH);
+        $memory = json_decode($content, true) ?? [];
+    }
+
+    // Campi aggiornabili
+    $updates = [];
+
+    // Ultimo argomento discusso
+    if (isset($input['ultimo_argomento'])) {
+        $memory['utente']['ultimo_argomento'] = $input['ultimo_argomento'];
+        $updates[] = 'ultimo_argomento';
+    }
+
+    // Aggiungi interesse recente (max 10, FIFO)
+    if (isset($input['interesse'])) {
+        if (!isset($memory['utente']['interessi_recenti'])) {
+            $memory['utente']['interessi_recenti'] = [];
+        }
+        // Evita duplicati
+        if (!in_array($input['interesse'], $memory['utente']['interessi_recenti'])) {
+            array_unshift($memory['utente']['interessi_recenti'], $input['interesse']);
+            $memory['utente']['interessi_recenti'] = array_slice($memory['utente']['interessi_recenti'], 0, 10);
+            $updates[] = 'interessi_recenti';
+        }
+    }
+
+    // Aggiungi argomento frequente
+    if (isset($input['argomento_frequente'])) {
+        if (!isset($memory['utente']['argomenti_frequenti'])) {
+            $memory['utente']['argomenti_frequenti'] = [];
+        }
+        // Conta frequenza
+        $found = false;
+        foreach ($memory['utente']['argomenti_frequenti'] as &$arg) {
+            if (strtolower($arg['nome']) === strtolower($input['argomento_frequente'])) {
+                $arg['count'] = ($arg['count'] ?? 1) + 1;
+                $found = true;
+                break;
+            }
+        }
+        if (!$found) {
+            $memory['utente']['argomenti_frequenti'][] = [
+                'nome' => $input['argomento_frequente'],
+                'count' => 1
+            ];
+        }
+        // Ordina per frequenza e mantieni top 10
+        usort($memory['utente']['argomenti_frequenti'], fn($a, $b) => ($b['count'] ?? 0) - ($a['count'] ?? 0));
+        $memory['utente']['argomenti_frequenti'] = array_slice($memory['utente']['argomenti_frequenti'], 0, 10);
+        $updates[] = 'argomenti_frequenti';
+    }
+
+    // Timestamp aggiornamento
+    $memory['ultimo_aggiornamento'] = date('Y-m-d H:i:s');
+
+    // Salva
+    $result = file_put_contents(AGEA_MEMORY_PATH, json_encode($memory, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
+
+    if ($result === false) {
+        return ['error' => 'Impossibile salvare memoria'];
+    }
+
+    return [
+        'success' => true,
+        'message' => 'Memoria aggiornata: ' . implode(', ', $updates),
+        'updates' => $updates
+    ];
+}
+
+/**
+ * Ricorda un'entità importante (cliente, fornitore, etc.)
+ */
+function tool_ageaRememberEntity(array $input): array {
+    $entityId = $input['entity_id'] ?? null;
+    $entityNome = $input['entity_nome'] ?? null;
+    $nota = $input['nota'] ?? null;
+
+    if (!$entityId || !$entityNome) {
+        return ['error' => 'Richiesti entity_id e entity_nome'];
+    }
+
+    // Leggi memoria
+    $memory = [];
+    if (file_exists(AGEA_MEMORY_PATH)) {
+        $content = file_get_contents(AGEA_MEMORY_PATH);
+        $memory = json_decode($content, true) ?? [];
+    }
+
+    if (!isset($memory['entita_importanti'])) {
+        $memory['entita_importanti'] = [];
+    }
+
+    // Aggiorna o crea entry
+    $memory['entita_importanti'][$entityId] = [
+        'nome' => $entityNome,
+        'note_agea' => $nota,
+        'ultimo_check' => date('Y-m-d'),
+        'volte_menzionata' => ($memory['entita_importanti'][$entityId]['volte_menzionata'] ?? 0) + 1
+    ];
+
+    // Limita a 50 entità (rimuovi quelle meno menzionate)
+    if (count($memory['entita_importanti']) > 50) {
+        uasort($memory['entita_importanti'], fn($a, $b) => ($b['volte_menzionata'] ?? 0) - ($a['volte_menzionata'] ?? 0));
+        $memory['entita_importanti'] = array_slice($memory['entita_importanti'], 0, 50, true);
+    }
+
+    $memory['ultimo_aggiornamento'] = date('Y-m-d H:i:s');
+
+    file_put_contents(AGEA_MEMORY_PATH, json_encode($memory, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
+
+    return [
+        'success' => true,
+        'message' => "Ricorderò '$entityNome'",
+        'entity_id' => $entityId
+    ];
+}
+
+/**
+ * Salva un insight/conversazione importante
+ */
+function tool_ageaSaveInsight(array $input): array {
+    $sintesi = $input['sintesi'] ?? null;
+    $tipo = $input['tipo'] ?? 'generale'; // analisi, problema, opportunita, seguito
+    $entitaCollegate = $input['entita_collegate'] ?? [];
+
+    if (!$sintesi) {
+        return ['error' => 'Richiesta sintesi dell\'insight'];
+    }
+
+    // Leggi memoria
+    $memory = [];
+    if (file_exists(AGEA_MEMORY_PATH)) {
+        $content = file_get_contents(AGEA_MEMORY_PATH);
+        $memory = json_decode($content, true) ?? [];
+    }
+
+    if (!isset($memory['conversazioni_chiave'])) {
+        $memory['conversazioni_chiave'] = [];
+    }
+
+    // Aggiungi insight
+    array_unshift($memory['conversazioni_chiave'], [
+        'data' => date('Y-m-d'),
+        'tipo' => $tipo,
+        'sintesi' => $sintesi,
+        'entita_collegate' => $entitaCollegate
+    ]);
+
+    // Mantieni solo ultimi 20 insight
+    $memory['conversazioni_chiave'] = array_slice($memory['conversazioni_chiave'], 0, 20);
+    $memory['ultimo_aggiornamento'] = date('Y-m-d H:i:s');
+
+    file_put_contents(AGEA_MEMORY_PATH, json_encode($memory, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
+
+    return [
+        'success' => true,
+        'message' => 'Insight salvato',
+        'tipo' => $tipo
+    ];
+}
+
+
+
+/**
+ * Tool: Legge la struttura configurata dal team
+ * Restituisce tipi, tipologie, campi personalizzati e famiglie prodotto
+ */
+function tool_getTeamStructure(array $user): array {
+    $teamId = $user['team_id'] ?? $user['azienda_id'] ?? null;
+    if (!$teamId) {
+        return ['error' => 'Team non identificato'];
+    }
+
+    $filePath = __DIR__ . '/../../config/ai/teams/' . $teamId . '_struttura.md';
+
+    if (!file_exists($filePath)) {
+        // Prova a rigenerare
+        require_once __DIR__ . '/../../includes/ai-docs-generator.php';
+        $db = getDB();
+        regenerateAiStructureDocs($db, $teamId);
+    }
+
+    if (file_exists($filePath)) {
+        $content = file_get_contents($filePath);
+        return [
+            'success' => true,
+            'message' => 'Struttura team caricata',
+            'content' => $content
+        ];
+    }
+
+    return ['error' => 'File struttura non trovato. Configura tipi e tipologie in Setup.'];
+}
