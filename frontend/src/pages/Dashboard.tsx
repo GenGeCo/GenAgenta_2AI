@@ -433,7 +433,7 @@ export default function Dashboard() {
               marginRight: '12px',
             }}
           >
-            {personalAccess ? 'ðŸ”“' : 'ðŸ”’'}
+            {personalAccess ? '🔓' : '🔒'}
           </button>
 
           {/* Bottone AI Chat (Agea) */}
