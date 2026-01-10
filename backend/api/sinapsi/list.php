@@ -94,11 +94,8 @@ $sql = "
     LEFT JOIN famiglie_prodotto fp ON s.famiglia_prodotto_id = fp.id
     $whereClause
     ORDER BY s.data_inizio DESC
-    LIMIT ? OFFSET ?
+    LIMIT $limit OFFSET $offset
 ";
-
-$params[] = $limit;
-$params[] = $offset;
 
 $stmt = $db->prepare($sql);
 $stmt->execute($params);

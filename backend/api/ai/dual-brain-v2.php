@@ -10,6 +10,7 @@
 // Carica config e helpers
 require_once __DIR__ . '/../../includes/helpers.php';
 require_once __DIR__ . '/../../config/database.php';
+require_once __DIR__ . '/debug-helper.php';
 
 $config = require __DIR__ . '/../../config/config.php';
 $apiKey = $config['gemini_api_key'] ?? getenv('GEMINI_API_KEY');
@@ -32,6 +33,12 @@ if (empty($message)) {
 }
 
 header('Content-Type: application/json');
+
+// Log messaggio in ingresso
+aiDebugLog('DUAL_BRAIN_REQUEST', [
+    'message' => substr($message, 0, 200),
+    'has_context' => !empty($context)
+]);
 
 /**
  * Chiama Gemini API
@@ -133,6 +140,14 @@ try {
     // FASE 1: AGEA valuta la richiesta
     // ============================================
 
+    // Prepara il context UI per Agea
+    $contextStr = '';
+    if (!empty($context)) {
+        $contextStr = "\n\n=== CONTESTO UI CORRENTE ===\n";
+        $contextStr .= json_encode($context, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+        $contextStr .= "\n=== FINE CONTESTO ===\n";
+    }
+
     $ageaSystemPrompt = $ageaBasePrompt . <<<PROMPT
 
 === DUAL BRAIN: QUANDO DELEGARE ALL'INGEGNERE ===
@@ -157,6 +172,9 @@ Per delegare: delegate_to_engineer(task: "descrizione chiara del task")
 L'Ingegnere farà il lavoro pesante e ti tornerà il risultato.
 Tu poi lo presenti all'utente in modo amichevole!
 PROMPT;
+
+    // Aggiungi il context al prompt
+    $ageaSystemPrompt .= $contextStr;
 
     $ageaTools = [[
         'name' => 'delegate_to_engineer',
@@ -186,6 +204,9 @@ PROMPT;
     $ageaContent = callGemini($apiKey, 'gemini-2.5-flash', $ageaConversation, $ageaTools);
     $ageaParts = $ageaContent['parts'] ?? [];
 
+    // DEBUG: Log della risposta Agea
+    error_log("AGEA RESPONSE: " . json_encode($ageaContent));
+
     // Estrai testo e function calls
     $ageaText = '';
     $ageaFunctionCall = null;
@@ -201,6 +222,11 @@ PROMPT;
 
     // Se Agea NON delega, risponde direttamente
     if (!$ageaFunctionCall || $ageaFunctionCall['name'] !== 'delegate_to_engineer') {
+        aiDebugLog('DUAL_BRAIN_RESPONSE', [
+            'agent' => 'agea',
+            'delegated' => false,
+            'response' => substr($ageaText, 0, 200)
+        ]);
         echo json_encode([
             'success' => true,
             'agent' => 'agea',

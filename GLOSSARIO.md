@@ -132,7 +132,7 @@ Per il refactoring, ecco la corrispondenza:
 ---
 
 debuga ai:
-https://www.gruppogea.net/genagenta/backend/ai-debug.php
+https://www.gruppogea.net/genagenta/backend/ai-debug.php (vecchio percorso da verificare nuovo)
 
 
 *File creato per allineare terminologia. Non viene deployato sul server (solo GitHub).*

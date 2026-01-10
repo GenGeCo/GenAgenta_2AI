@@ -436,7 +436,36 @@ export function AiChat({ isOpen, onClose, onAction, selectedEntity, visibilityCo
           console.log('uiState length:', uiState?.length || 0);
           console.log('=============================');
 
-          currentResponse = await api.aiChat(userMessage.content, history, Object.keys(context).length > 0 ? context : undefined);
+          // DUAL BRAIN: Usa il nuovo endpoint
+          try {
+            const dualBrainResponse = await api.aiDualBrain(
+              userMessage.content,
+              Object.keys(context).length > 0 ? context : undefined
+            );
+
+            // Converti risposta Dual Brain in formato compatibile con AiChatResponse
+            if (dualBrainResponse.success) {
+              const responseText = dualBrainResponse.delegated
+                ? `${dualBrainResponse.agea_message || ''}\n\n${dualBrainResponse.engineer_result || ''}`
+                : dualBrainResponse.response || '';
+
+              currentResponse = {
+                response: responseText.trim(),
+                status: 'complete',
+                // Metadata Dual Brain (non visibile all'utente, ma utile per debug)
+                actions: [{
+                  agent: dualBrainResponse.agent,
+                  delegated: dualBrainResponse.delegated
+                }]
+              };
+            } else {
+              throw new Error(dualBrainResponse.error || 'Dual Brain error');
+            }
+          } catch (dualBrainError) {
+            console.warn('Dual Brain fallback to old API:', dualBrainError);
+            // Fallback al vecchio endpoint se Dual Brain fallisce
+            currentResponse = await api.aiChat(userMessage.content, history, Object.keys(context).length > 0 ? context : undefined);
+          }
         } else {
           // Resume con il risultato dell'azione
           const actionResult = resumeContext._actionResult as { success: boolean; data?: unknown; error?: string };

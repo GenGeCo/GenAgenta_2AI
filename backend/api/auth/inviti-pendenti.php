@@ -11,14 +11,14 @@ $db = getDB();
 $stmt = $db->prepare('
     SELECT
         i.id,
-        i.azienda_id,
-        a.nome as nome_azienda,
+        i.team_id as azienda_id,
+        t.nome as nome_azienda,
         u.nome as invitato_da_nome,
         i.data_creazione
     FROM inviti i
-    JOIN aziende a ON i.azienda_id = a.id
+    JOIN team t ON i.team_id = t.id
     JOIN utenti u ON i.invitato_da = u.id
-    WHERE i.email_invitato = ? AND i.stato = "pendente"
+    WHERE i.email = ? AND i.stato = "pendente"
     ORDER BY i.data_creazione DESC
     LIMIT 1
 ');

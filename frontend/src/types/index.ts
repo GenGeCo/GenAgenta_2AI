@@ -250,7 +250,8 @@ export type UserActionType =
   | 'filter_change'   // Cambio filtro
   | 'map_move'        // Spostamento/zoom mappa
   | 'panel_open'      // Apertura pannello
-  | 'panel_close';    // Chiusura pannello
+  | 'panel_close'     // Chiusura pannello
+  | 'ai_action';      // Azione eseguita dall'AI
 
 export interface UserAction {
   type: UserActionType;
@@ -271,6 +272,8 @@ export interface UserAction {
     zoom?: number;
     // Per panel_open/close
     panelName?: string;
+    // Per ai_action
+    action?: string;
   };
 }
 

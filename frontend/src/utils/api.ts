@@ -618,6 +618,23 @@ class ApiClient {
     return data;
   }
 
+  // Dual Brain API (Agea + Ingegnere)
+  async aiDualBrain(
+    message: string,
+    context?: Record<string, unknown>
+  ): Promise<{
+    success: boolean;
+    agent: 'agea' | 'engineer';
+    response?: string;
+    agea_message?: string;
+    engineer_result?: string;
+    delegated: boolean;
+    error?: string;
+  }> {
+    const { data } = await this.client.post('/ai/dual-brain-v2', { message, context });
+    return data;
+  }
+
   // Continua il loop AI dopo aver eseguito una pending_action
   async aiChatContinue(
     resumeContext: Record<string, unknown>,

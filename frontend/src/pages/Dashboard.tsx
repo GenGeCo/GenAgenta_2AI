@@ -1,6 +1,7 @@
 // GenAgenTa - Dashboard principale
 
 import { useState, useEffect, useRef } from 'react';
+import { useCopilotReadable } from '@copilotkit/react-core';
 import { useAuth } from '../hooks/useAuth';
 import { useNeuroni, useSinapsi, useTipi, useTipologie, useInvalidateData } from '../hooks/useData';
 import { useCopilotContext, formatCopilotContextForPrompt } from '../hooks/useCopilotContext';
@@ -207,6 +208,12 @@ export default function Dashboard() {
 
   // Il contesto formattato viene passato ad AiChat che lo manda al backend
   const copilotContextForAi = formatCopilotContextForPrompt(copilotContext);
+
+  // CopilotKit - espone il contesto dell'app all'AI
+  useCopilotReadable({
+    description: "Current state of the GenAgenta CRM application",
+    value: copilotContextForAi
+  });
 
   // Controlla inviti pendenti al caricamento
   useEffect(() => {

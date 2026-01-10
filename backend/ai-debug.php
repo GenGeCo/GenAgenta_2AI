@@ -221,7 +221,7 @@
 
         async function clearLogs() {
             try {
-                await fetch('api/ai/debug-log.php', { method: 'POST' });
+                await fetch('/api/ai/debug-log.php', { method: 'POST' });
                 allLogs = [];
                 lastTimestamp = 0;
                 renderLogs();
@@ -368,7 +368,7 @@
             if (isPaused) return;
 
             try {
-                const url = lastTimestamp ? `api/ai/debug-log.php?since=${lastTimestamp}` : 'api/ai/debug-log.php';
+                const url = lastTimestamp ? `/api/ai/debug-log.php?since=${lastTimestamp}` : '/api/ai/debug-log.php';
                 const response = await fetch(url);
                 const newLogs = await response.json();
 

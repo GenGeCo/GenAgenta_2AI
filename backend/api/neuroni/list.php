@@ -121,10 +121,8 @@ if ($hasVendite) {
     $selectFields .= ", COALESCE((SELECT SUM(v.importo) FROM vendite_prodotto v WHERE v.neurone_id = n.id), 0) as venduto_totale";
 }
 
-$sql = "SELECT $selectFields FROM neuroni n $whereClause ORDER BY n.nome ASC LIMIT ? OFFSET ?";
-
-$params[] = $limit;
-$params[] = $offset;
+// LIMIT e OFFSET sono già int (sanitizzati sopra), li interpoliamo per evitare problemi PDO
+$sql = "SELECT $selectFields FROM neuroni n $whereClause ORDER BY n.nome ASC LIMIT $limit OFFSET $offset";
 
 $stmt = $db->prepare($sql);
 $stmt->execute($params);
