@@ -1,7 +1,7 @@
 // GenAgenTa - Dashboard principale
 
 import { useState, useEffect, useRef } from 'react';
-import { useCopilotReadable } from '@copilotkit/react-core';
+import { useCopilotReadable, useCopilotAction } from '@copilotkit/react-core';
 import { useAuth } from '../hooks/useAuth';
 import { useNeuroni, useSinapsi, useTipi, useTipologie, useInvalidateData } from '../hooks/useData';
 import { useCopilotContext, formatCopilotContextForPrompt } from '../hooks/useCopilotContext';
@@ -213,6 +213,125 @@ export default function Dashboard() {
   useCopilotReadable({
     description: "Current state of the GenAgenta CRM application",
     value: copilotContextForAi
+  });
+
+  // CopilotKit Actions - l'AI può eseguire queste azioni
+  useCopilotAction({
+    name: "fly_to",
+    description: "Sposta la vista della mappa verso una località. Usa questo quando l'utente chiede di andare in un posto (es: 'vai a Roma', 'mostrami Milano').",
+    parameters: [
+      {
+        name: "location",
+        type: "string",
+        description: "Nome della località (es: 'Roma', 'Milano centro', 'Via Roma 1, Torino')",
+        required: true
+      },
+      {
+        name: "zoom",
+        type: "number",
+        description: "Livello di zoom (1-20, default 14)",
+        required: false
+      }
+    ],
+    handler: async ({ location, zoom }) => {
+      console.log('CopilotKit Action: fly_to', location, zoom);
+      try {
+        const geoResult = await api.geocodeSearch(location);
+        if (geoResult?.success && geoResult.results?.length > 0) {
+          const loc = geoResult.results[0];
+          setFlyToPosition({ lat: loc.lat, lng: loc.lng, zoom: zoom || 14 });
+          return `Ho spostato la mappa su ${location}`;
+        }
+        return `Non ho trovato "${location}"`;
+      } catch (error) {
+        return `Errore nella ricerca di "${location}"`;
+      }
+    }
+  });
+
+  useCopilotAction({
+    name: "set_map_style",
+    description: "Cambia lo stile/visualizzazione della mappa. Usa questo quando l'utente chiede di cambiare vista (es: 'metti satellite', 'vista scura', 'mappa stradale').",
+    parameters: [
+      {
+        name: "style",
+        type: "string",
+        description: "Stile mappa: 'satellite-v9' (satellitare), 'streets-v12' (stradale), 'dark-v11' (scuro), 'light-v11' (chiaro), 'outdoors-v12' (outdoor)",
+        required: true
+      }
+    ],
+    handler: async ({ style }) => {
+      console.log('CopilotKit Action: set_map_style', style);
+      setMapStyleFromAi(style);
+      const styleNames: Record<string, string> = {
+        'satellite-v9': 'satellitare',
+        'streets-v12': 'stradale',
+        'dark-v11': 'scuro',
+        'light-v11': 'chiaro',
+        'outdoors-v12': 'outdoor'
+      };
+      return `Ho cambiato la mappa in vista ${styleNames[style] || style}`;
+    }
+  });
+
+  useCopilotAction({
+    name: "select_entity",
+    description: "Seleziona un'entità sulla mappa per mostrare i suoi dettagli. Usa questo quando l'utente chiede di vedere un'entità specifica.",
+    parameters: [
+      {
+        name: "entity_id",
+        type: "string",
+        description: "ID dell'entità da selezionare",
+        required: true
+      }
+    ],
+    handler: async ({ entity_id }) => {
+      console.log('CopilotKit Action: select_entity', entity_id);
+      const entity = neuroni.find(n => n.id === entity_id);
+      if (entity) {
+        setSelectedNeurone(entity);
+        if (entity.lat && entity.lng) {
+          setFlyToPosition({ lat: entity.lat, lng: entity.lng, zoom: 16 });
+        }
+        return `Ho selezionato "${entity.nome}"`;
+      }
+      return `Entità con ID ${entity_id} non trovata`;
+    }
+  });
+
+  useCopilotAction({
+    name: "search_entities",
+    description: "Cerca entità per nome o tipo. Usa questo quando l'utente chiede di cercare qualcosa (es: 'cerca clienti', 'trova Mario Rossi').",
+    parameters: [
+      {
+        name: "query",
+        type: "string",
+        description: "Testo da cercare nel nome delle entità",
+        required: false
+      },
+      {
+        name: "type",
+        type: "string",
+        description: "Tipo di entità (cantiere, cliente, fornitore, tecnico, rivendita)",
+        required: false
+      }
+    ],
+    handler: async ({ query, type }) => {
+      console.log('CopilotKit Action: search_entities', query, type);
+      let results = neuroni;
+      if (type) {
+        results = results.filter(n => n.tipo?.toLowerCase() === type.toLowerCase());
+      }
+      if (query) {
+        const q = query.toLowerCase();
+        results = results.filter(n => n.nome.toLowerCase().includes(q));
+      }
+      if (results.length === 0) {
+        return "Nessuna entità trovata";
+      }
+      const list = results.slice(0, 5).map(n => `- ${n.nome} (${n.tipo})`).join('\n');
+      return `Ho trovato ${results.length} entità:\n${list}${results.length > 5 ? `\n...e altre ${results.length - 5}` : ''}`;
+    }
   });
 
   // Controlla inviti pendenti al caricamento

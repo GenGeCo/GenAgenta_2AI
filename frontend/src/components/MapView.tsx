@@ -26,6 +26,7 @@ interface MapViewProps {
   flyToPosition?: { lat: number; lng: number; zoom?: number; pitch?: number; bearing?: number } | null;
   aiStyleChange?: string | null;
   onAiStyleApplied?: () => void;
+  onStyleChange?: (style: string) => void;  // Notifica cambio stile (per contesto AI)
   pickedPosition?: { lat: number; lng: number } | null;
   // Props per picking connessione (target su mappa)
   connectionPickingMode?: boolean;
@@ -404,6 +405,7 @@ export default function MapView({
   flyToPosition,
   aiStyleChange,
   onAiStyleApplied,
+  onStyleChange,
   pickedPosition,
   connectionPickingMode = false,
   connectionSourceId = null,
@@ -519,6 +521,7 @@ export default function MapView({
     if (map.current) {
       map.current.setStyle(`mapbox://styles/mapbox/${styleId}`);
       setMapStyle(styleId);
+      onStyleChange?.(styleId);  // Notifica il cambio stile per contesto AI
       // Quando lo stile è caricato, forza re-render dei layer
       map.current.once('style.load', () => {
         setStyleLoaded(prev => prev + 1);
@@ -526,7 +529,7 @@ export default function MapView({
       // Salva preferenza nel DB
       api.savePreferenze({ mappa_stile: styleId }).catch(console.error);
     }
-  }, []);
+  }, [onStyleChange]);
 
   // Applica opacità alla mappa base (tutti i tipi di layer)
   useEffect(() => {
