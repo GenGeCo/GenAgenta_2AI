@@ -34,10 +34,14 @@ if (empty($message)) {
 
 header('Content-Type: application/json');
 
-// Log messaggio in ingresso
+// Log messaggio in ingresso con dettagli contesto
 aiDebugLog('DUAL_BRAIN_REQUEST', [
     'message' => substr($message, 0, 200),
-    'has_context' => !empty($context)
+    'has_context' => !empty($context),
+    'has_copilotContext' => !empty($context['copilotContext']),
+    'has_selectedEntity' => !empty($context['selectedEntity']),
+    'has_uiState' => !empty($context['uiState']),
+    'context_keys' => !empty($context) ? array_keys($context) : []
 ]);
 
 /**
@@ -140,56 +144,174 @@ try {
     // FASE 1: AGEA valuta la richiesta
     // ============================================
 
-    // Prepara il context UI per Agea
+    // Prepara il context UI per Agea in formato leggibile
     $contextStr = '';
     if (!empty($context)) {
-        $contextStr = "\n\n=== CONTESTO UI CORRENTE ===\n";
-        $contextStr .= json_encode($context, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+        $contextStr = "\n\n=== CONTESTO LIVE DELL'APPLICAZIONE ===\n";
+
+        // Contesto Copilot (stato app formattato)
+        if (!empty($context['copilotContext'])) {
+            $contextStr .= "\n" . $context['copilotContext'] . "\n";
+        }
+
+        // Entità selezionata
+        if (!empty($context['selectedEntity'])) {
+            $e = $context['selectedEntity'];
+            $contextStr .= "\nENTITÀ ATTUALMENTE SELEZIONATA:\n";
+            $contextStr .= "  Nome: " . ($e['nome'] ?? 'N/A') . "\n";
+            $contextStr .= "  Tipo: " . ($e['tipo'] ?? 'N/A') . "\n";
+            if (!empty($e['indirizzo'])) {
+                $contextStr .= "  Indirizzo: " . $e['indirizzo'] . "\n";
+            }
+            $contextStr .= "  (Quando l'utente dice 'questo' o 'questa' si riferisce a questa entità)\n";
+        }
+
+        // Marker AI sulla mappa
+        if (!empty($context['aiMarkers'])) {
+            $contextStr .= "\nMARKER AI SULLA MAPPA: " . count($context['aiMarkers']) . " segnaposti piazzati\n";
+        }
+
+        // Stato UI (accessibilità + azioni)
+        if (!empty($context['uiState'])) {
+            $contextStr .= "\n" . $context['uiState'] . "\n";
+        }
+
         $contextStr .= "\n=== FINE CONTESTO ===\n";
     }
 
     $ageaSystemPrompt = $ageaBasePrompt . <<<PROMPT
 
-=== DUAL BRAIN: QUANDO DELEGARE ALL'INGEGNERE ===
+=== LE TUE CAPACITÀ (TOOL) ===
 
-Hai un collega specializzato: l'INGEGNERE (Gemini Pro).
-Lui è il CERVELLO ANALITICO con accesso diretto al database.
+Hai questi strumenti a disposizione per interagire con l'interfaccia:
 
-DELEGA A LUI quando serve:
-- Analisi complesse: "analizza vendite ultimi 6 mesi", "trend cantieri"
-- Query database multiple: "quali clienti hanno speso più di X"
-- Statistiche e confronti: "confronta performance 2024 vs 2025"
-- Ragionamento profondo: decisioni basate su molti dati
+1. **fly_to** - Sposta la vista della mappa
+   - query: nome località ("Roma", "Milano centro", "Via Roma 1, Torino")
+   - zoom: livello zoom opzionale (1-20, default 14)
+   Esempio: Se utente dice "vai a Roma" → usa fly_to(query: "Roma")
 
-TU GESTISCI direttamente:
-- Chat normale, saluti
-- Azioni mappa (fly_to, select)
-- Creazione/modifica singole entità
-- Domande semplici su dati visibili
+2. **set_map_style** - Cambia lo stile della mappa
+   - style: "streets" (stradale), "satellite" (satellitare), "dark" (scuro), "light" (chiaro)
+   Esempio: Se utente dice "metti satellite" → usa set_map_style(style: "satellite")
 
-Per delegare: delegate_to_engineer(task: "descrizione chiara del task")
+3. **select_entity** - Seleziona un'entità sulla mappa
+   - entity_id: ID dell'entità da selezionare
+   Usa questo quando l'utente vuole vedere i dettagli di un'entità specifica
 
-L'Ingegnere farà il lavoro pesante e ti tornerà il risultato.
-Tu poi lo presenti all'utente in modo amichevole!
+4. **create_entity** - Crea una nuova entità
+   - nome: nome dell'entità (obbligatorio)
+   - tipo: cantiere, cliente, fornitore, tecnico, rivendita (obbligatorio)
+   - indirizzo: indirizzo completo (opzionale)
+
+5. **delegate_to_engineer** - Delega al cervello analitico
+   - task: descrizione del compito da svolgere
+   Usa questo per analisi complesse che richiedono query database
+
+=== QUANDO USARE COSA ===
+
+USA I TUOI TOOL per:
+- Navigazione mappa: fly_to
+- Cambiare visualizzazione: set_map_style ("satellite", "streets", "dark", "light")
+- Selezionare entità: select_entity
+- Creare entità: create_entity
+- Chat normale: rispondi direttamente
+
+DELEGA ALL'INGEGNERE per:
+- Analisi dati: "analizza vendite", "trend cantieri"
+- Query complesse: "quali clienti hanno speso più di X"
+- Statistiche: "confronta 2024 vs 2025"
+
+IMPORTANTE: Quando l'utente chiede di cambiare visualizzazione/stile mappa,
+USA SEMPRE set_map_style con il parametro style corretto!
 PROMPT;
 
     // Aggiungi il context al prompt
     $ageaSystemPrompt .= $contextStr;
 
-    $ageaTools = [[
-        'name' => 'delegate_to_engineer',
-        'description' => 'Delega una richiesta complessa all\'Ingegnere (Gemini Pro) che ha accesso al database',
-        'parameters' => [
-            'type' => 'object',
-            'properties' => [
-                'task' => [
-                    'type' => 'string',
-                    'description' => 'Descrizione chiara del task'
-                ]
-            ],
-            'required' => ['task']
+    $ageaTools = [
+        [
+            'name' => 'delegate_to_engineer',
+            'description' => 'Delega una richiesta complessa all\'Ingegnere (Gemini Pro) che ha accesso al database',
+            'parameters' => [
+                'type' => 'object',
+                'properties' => [
+                    'task' => [
+                        'type' => 'string',
+                        'description' => 'Descrizione chiara del task'
+                    ]
+                ],
+                'required' => ['task']
+            ]
+        ],
+        [
+            'name' => 'fly_to',
+            'description' => 'Sposta la vista della mappa verso una località o coordinate specifiche',
+            'parameters' => [
+                'type' => 'object',
+                'properties' => [
+                    'query' => [
+                        'type' => 'string',
+                        'description' => 'Nome della località (es: "Roma", "Milano centro", "Via Roma 1, Torino") oppure coordinate nel formato "lat,lng"'
+                    ],
+                    'zoom' => [
+                        'type' => 'number',
+                        'description' => 'Livello di zoom opzionale (1-20, default 14)'
+                    ]
+                ],
+                'required' => ['query']
+            ]
+        ],
+        [
+            'name' => 'create_entity',
+            'description' => 'Crea una nuova entità sulla mappa (cantiere, cliente, fornitore, ecc)',
+            'parameters' => [
+                'type' => 'object',
+                'properties' => [
+                    'nome' => [
+                        'type' => 'string',
+                        'description' => 'Nome dell\'entità'
+                    ],
+                    'tipo' => [
+                        'type' => 'string',
+                        'description' => 'Tipo: cantiere, cliente, fornitore, tecnico, rivendita'
+                    ],
+                    'indirizzo' => [
+                        'type' => 'string',
+                        'description' => 'Indirizzo completo'
+                    ]
+                ],
+                'required' => ['nome', 'tipo']
+            ]
+        ],
+        [
+            'name' => 'select_entity',
+            'description' => 'Seleziona e evidenzia un\'entità sulla mappa',
+            'parameters' => [
+                'type' => 'object',
+                'properties' => [
+                    'entity_id' => [
+                        'type' => 'string',
+                        'description' => 'ID dell\'entità da selezionare'
+                    ]
+                ],
+                'required' => ['entity_id']
+            ]
+        ],
+        [
+            'name' => 'set_map_style',
+            'description' => 'Cambia lo stile/visualizzazione della mappa',
+            'parameters' => [
+                'type' => 'object',
+                'properties' => [
+                    'style' => [
+                        'type' => 'string',
+                        'description' => 'Stile mappa: "streets" (stradale), "satellite" (satellitare), "dark" (scuro), "light" (chiaro)'
+                    ]
+                ],
+                'required' => ['style']
+            ]
         ]
-    ]];
+    ];
 
     $ageaConversation = [
         [
@@ -220,19 +342,42 @@ PROMPT;
         }
     }
 
-    // Se Agea NON delega, risponde direttamente
+    // Se Agea NON delega all'ingegnere
     if (!$ageaFunctionCall || $ageaFunctionCall['name'] !== 'delegate_to_engineer') {
-        aiDebugLog('DUAL_BRAIN_RESPONSE', [
-            'agent' => 'agea',
-            'delegated' => false,
-            'response' => substr($ageaText, 0, 200)
-        ]);
-        echo json_encode([
+
+        // Prepara risposta base
+        $response = [
             'success' => true,
             'agent' => 'agea',
             'response' => $ageaText,
             'delegated' => false
+        ];
+
+        // Se c'è un tool call (fly_to, create_entity, ecc.), aggiungilo alla risposta
+        if ($ageaFunctionCall) {
+            $response['tool_call'] = [
+                'name' => $ageaFunctionCall['name'],
+                'args' => $ageaFunctionCall['args'] ?? []
+            ];
+
+            // Log dettagliato con tool call
+            aiDebugLog('AGEA_TOOL_CALL', [
+                'tool' => $ageaFunctionCall['name'],
+                'args' => $ageaFunctionCall['args'] ?? [],
+                'text' => substr($ageaText, 0, 100)
+            ]);
+        }
+
+        // Log risposta
+        aiDebugLog('DUAL_BRAIN_RESPONSE', [
+            'agent' => 'agea',
+            'delegated' => false,
+            'has_tool_call' => $ageaFunctionCall !== null,
+            'tool_name' => $ageaFunctionCall['name'] ?? null,
+            'response' => substr($ageaText, 0, 200)
         ]);
+
+        echo json_encode($response);
         exit;
     }
 
