@@ -2,6 +2,8 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { useCopilotReadable, useCopilotAction } from '@copilotkit/react-core';
+import { CopilotPopup } from '@copilotkit/react-ui';
+import '@copilotkit/react-ui/styles.css';
 import { useAuth } from '../hooks/useAuth';
 import { useNeuroni, useSinapsi, useTipi, useTipologie, useInvalidateData } from '../hooks/useData';
 import { useCopilotContext, formatCopilotContextForPrompt } from '../hooks/useCopilotContext';
@@ -16,7 +18,8 @@ import InvitePopup from '../components/InvitePopup';
 import NeuroneFormModal from '../components/NeuroneFormModal';
 import SinapsiDetailPanel from '../components/SinapsiDetailPanel';
 import { QuickCreateEntity, QuickEntityActions, QuickSelectTarget, QuickConnectionType, QuickTransactionForm } from '../components/QuickActionPopup';
-import { AiChat, AiFrontendAction } from '../components/AiChat';
+// AiFrontendAction mantenuto per compatibilità con vecchio codice
+import type { AiFrontendAction } from '../components/AiChat';
 import FloatingSuggestions from '../components/FloatingSuggestions';
 import type { Neurone, FiltriMappa, UserAction, UserActionType, AiMarker } from '../types';
 
@@ -69,7 +72,6 @@ export default function Dashboard() {
   const [showPinModal, setShowPinModal] = useState(false);
   const [showSetPinModal, setShowSetPinModal] = useState(false);
   const [showAiChat, setShowAiChat] = useState(false);
-  const [aiInitialMessage, setAiInitialMessage] = useState<string | null>(null);
 
   // Stato per selezione posizione su mappa (creazione neurone)
   const [mapPickingMode, setMapPickingMode] = useState(false);
@@ -385,16 +387,17 @@ export default function Dashboard() {
   };
 
   // Handler per AI markers
-  const clearAiMarkers = () => {
+  const _clearAiMarkers = () => {  // Prefisso _ = non usato direttamente, CopilotKit gestisce
     setAiMarkers([]);
   };
+  void _clearAiMarkers; // Evita warning TS
 
   const removeAiMarker = (markerId: string) => {
     setAiMarkers(prev => prev.filter(m => m.id !== markerId));
   };
 
-  // Handler azioni AI (comandi dalla chat)
-  const handleAiAction = (action: AiFrontendAction) => {
+  // Handler azioni AI legacy (ora useCopilotAction gestisce tutto)
+  const _handleAiAction = (action: AiFrontendAction) => {
     console.log('AI Action ricevuta:', action);
 
     switch (action.type) {
@@ -508,6 +511,7 @@ export default function Dashboard() {
         break;
     }
   };
+  void _handleAiAction; // Evita warning TS
 
   return (
     <div className="app-container">
@@ -1170,32 +1174,25 @@ export default function Dashboard() {
         sinapsi={sinapsi}
         neuroni={neuroni}
         isChatOpen={showAiChat}
-        onSuggestionClick={(message) => {
-          setAiInitialMessage(message);
+        onSuggestionClick={(_message) => {
+          // CopilotKit gestisce il messaggio; apriamo solo la chat
           setShowAiChat(true);
         }}
       />
 
-      {/* Agea Chat */}
-      <AiChat
-        isOpen={showAiChat}
-        onClose={() => setShowAiChat(false)}
-        onAction={handleAiAction}
-        selectedEntity={selectedNeurone || (focusedNeuroneId ? neuroni.find(n => n.id === focusedNeuroneId) : null) || null}
-        visibilityContext={{
-          visibleNeuroniIds: neuroni.map(n => n.id),
-          activeFilters: {
-            tipoNeurone: filtri.tipoNeurone,
-            categoria: filtri.categoria
-          }
+      {/* Agea Chat - CopilotKit */}
+      <CopilotPopup
+        labels={{
+          title: "Agea",
+          initial: `Ciao ${user?.nome?.split(' ')[0] || 'utente'}! Sono Agea, la tua assistente. Cosa vuoi fare?`,
+          placeholder: "Scrivi un messaggio...",
         }}
-        userActions={userActions}
-        userName={user?.nome}
-        initialMessage={aiInitialMessage}
-        onInitialMessageSent={() => setAiInitialMessage(null)}
-        aiMarkers={aiMarkers}
-        onClearAiMarkers={clearAiMarkers}
-        copilotContext={copilotContextForAi}
+        defaultOpen={showAiChat}
+        clickOutsideToClose={true}
+        onSetOpen={(open) => {
+          if (!open) setShowAiChat(false);
+        }}
+        className="copilot-popup-genagenta"
       />
     </div>
   );

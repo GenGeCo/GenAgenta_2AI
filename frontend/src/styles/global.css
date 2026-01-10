@@ -439,3 +439,77 @@ body {
     box-shadow: 0 0 12px rgba(59, 130, 246, 0.8);
   }
 }
+
+/* ================================================
+   CopilotKit - Stile GenAgenta per Agea
+   ================================================ */
+
+/* Popup container */
+.copilot-popup-genagenta {
+  --copilot-kit-primary-color: #3b82f6 !important;
+  --copilot-kit-contrast-color: #ffffff !important;
+  --copilot-kit-background-color: var(--bg-primary) !important;
+  --copilot-kit-secondary-color: var(--bg-secondary) !important;
+  --copilot-kit-muted-color: var(--text-secondary) !important;
+}
+
+/* Header personalizzato */
+[data-scope="chat"][data-part="header"] {
+  background: linear-gradient(135deg, #3b82f6, #8b5cf6) !important;
+  color: white !important;
+}
+
+/* Messaggio utente */
+[data-scope="chat"][data-part="user-message"] {
+  background: #3b82f6 !important;
+  color: white !important;
+  border-radius: 12px !important;
+}
+
+/* Messaggio assistente */
+[data-scope="chat"][data-part="assistant-message"] {
+  background: var(--bg-secondary) !important;
+  color: var(--text-primary) !important;
+  border-radius: 12px !important;
+}
+
+/* Input area */
+[data-scope="chat"][data-part="input"] {
+  border-color: var(--border-color) !important;
+  background: var(--bg-primary) !important;
+  color: var(--text-primary) !important;
+}
+
+/* Bottone invio */
+[data-scope="chat"][data-part="submit-button"] {
+  background: #3b82f6 !important;
+}
+
+[data-scope="chat"][data-part="submit-button"]:hover {
+  background: #2563eb !important;
+}
+
+/* Indicatore di caricamento */
+[data-scope="chat"][data-part="loading-indicator"] {
+  color: #3b82f6 !important;
+}
+
+/* Tool call in progress */
+[data-scope="chat"][data-part="action-execution"] {
+  background: rgba(59, 130, 246, 0.1) !important;
+  border: 1px solid rgba(59, 130, 246, 0.3) !important;
+  border-radius: 8px !important;
+  padding: 8px 12px !important;
+  margin: 4px 0 !important;
+}
+
+/* Tasto toggle (FAB) */
+[data-scope="chat"][data-part="trigger"] {
+  background: linear-gradient(135deg, #3b82f6, #8b5cf6) !important;
+  box-shadow: 0 4px 20px rgba(59, 130, 246, 0.4) !important;
+}
+
+[data-scope="chat"][data-part="trigger"]:hover {
+  transform: scale(1.05);
+  box-shadow: 0 6px 24px rgba(59, 130, 246, 0.5) !important;
+}

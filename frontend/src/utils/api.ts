@@ -630,6 +630,10 @@ class ApiClient {
     engineer_result?: string;
     delegated: boolean;
     error?: string;
+    tool_call?: {
+      name: string;
+      args?: Record<string, unknown>;
+    };
   }> {
     const { data } = await this.client.post('/ai/dual-brain-v2', { message, context });
     return data;

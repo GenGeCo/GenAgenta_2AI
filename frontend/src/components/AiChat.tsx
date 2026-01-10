@@ -449,14 +449,59 @@ export function AiChat({ isOpen, onClose, onAction, selectedEntity, visibilityCo
                 ? `${dualBrainResponse.agea_message || ''}\n\n${dualBrainResponse.engineer_result || ''}`
                 : dualBrainResponse.response || '';
 
+              // Prepara actions per il frontend
+              const frontendActions: AiFrontendAction[] = [];
+
+              // Se c'è un tool_call, convertilo in azione frontend
+              if (dualBrainResponse.tool_call) {
+                const tc = dualBrainResponse.tool_call;
+                console.log('Tool call ricevuto da Dual Brain:', tc);
+
+                if (tc.name === 'fly_to') {
+                  // Devo geocodificare la query e poi volare
+                  const query = tc.args?.query as string | undefined;
+                  if (query) {
+                    try {
+                      // Geocodifica la località
+                      const geoResult = await api.geocodeSearch(query);
+                      if (geoResult?.success && geoResult.results?.length > 0) {
+                        const loc = geoResult.results[0];
+                        frontendActions.push({
+                          type: 'map_fly_to',
+                          lat: loc.lat,
+                          lng: loc.lng,
+                          zoom: (tc.args?.zoom as number) || 14
+                        });
+                      }
+                    } catch (geoErr) {
+                      console.error('Errore geocoding per fly_to:', geoErr);
+                    }
+                  }
+                } else if (tc.name === 'select_entity') {
+                  frontendActions.push({
+                    type: 'map_select_entity',
+                    entity_id: tc.args?.entity_id as string
+                  });
+                } else if (tc.name === 'create_entity') {
+                  // Per create_entity, serve gestione più complessa
+                  // Per ora log solo
+                  console.log('create_entity richiesto:', tc.args);
+                } else if (tc.name === 'set_map_style') {
+                  // Cambia stile mappa
+                  const style = tc.args?.style as string;
+                  if (style) {
+                    frontendActions.push({
+                      type: 'map_set_style',
+                      style: style
+                    });
+                  }
+                }
+              }
+
               currentResponse = {
                 response: responseText.trim(),
                 status: 'complete',
-                // Metadata Dual Brain (non visibile all'utente, ma utile per debug)
-                actions: [{
-                  agent: dualBrainResponse.agent,
-                  delegated: dualBrainResponse.delegated
-                }]
+                actions: frontendActions.length > 0 ? frontendActions : undefined
               };
             } else {
               throw new Error(dualBrainResponse.error || 'Dual Brain error');

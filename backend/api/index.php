@@ -84,6 +84,9 @@ $routes = [
 
     // AI Assistant
     'POST:ai/chat' => 'ai/chat.php',
+    'GET:ai/copilot-runtime' => 'ai/copilot-runtime.php',
+    'POST:ai/copilot-runtime' => 'ai/copilot-runtime.php',
+    'POST:ai/dual-brain-v2' => 'ai/dual-brain-v2.php',
 
     // Agea Memory
     'GET:agea/memory' => 'agea/memory.php',

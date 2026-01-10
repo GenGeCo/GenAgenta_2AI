@@ -274,23 +274,114 @@ Noi proprietari vediamo:
 - Le rivendite esistono SOLO nel pannello admin
 - Motivo: privacy commerciale + non svelare che dietro ci sono rivendite
 
-## 9. DOMANDE ANCORA APERTE
+## 9. ALTRE DECISIONI
 
 ### 9.1 Stack Mobile
 > React Native, Flutter, o PWA?
 
-**RISPOSTA**: _________________
+**RISPOSTA**: ✅ **Flutter**
+- Una codebase → Android + iOS
+- Hardware disponibile: Android Studio + Mac
+- Offline-first nativo
+- Notifiche push funzionano bene su entrambi
+- Codice generabile in modo prevedibile e stabile
 
 ### 9.2 Branding
 > L'app si chiamerà sempre GenAgenTa o nuovo nome per il mercato edilizia?
 
-**RISPOSTA**: _________________
+**RISPOSTA**: ⏸️ Da decidere in seguito
+
+### 9.3 Tempistiche
+> Prima fix web app o sviluppo app mobile?
+
+**RISPOSTA**: ✅ Prima fix web app admin
+- Altra istanza Claude sta sistemando i bug
+- Senza connettori funzionanti non possiamo testare l'integrazione con app
+- Sequenza: Web App funzionante → API stabili → App Mobile
 
 ---
 
-## 10. VALORE STRATEGICO DEI DATI
+## 10. ASSISTENTE AI INTEGRATO
 
-### 10.1 Cosa Saprete (Intelligence di Mercato)
+### 10.1 Ruolo dell'AI
+> **L'AI è un TRADUTTORE, non un autore**
+
+L'AI traduce il linguaggio "da cantiere" in linguaggio tecnico per guidare l'utente verso i cicli corretti.
+
+**NON fa:**
+- ❌ Scrivere capitolati
+- ❌ Decidere al posto dell'utente
+- ❌ Inventare soluzioni
+
+**FA:**
+- ✅ Tradurre descrizioni informali → termini tecnici
+- ✅ Fare domande per capire meglio il problema
+- ✅ Proporre cicli esistenti tra cui scegliere
+- ✅ Spiegare differenze tra opzioni
+
+### 10.2 Esempio di Conversazione
+
+```
+MURATORE: "Ho un muro tutto crepato, fa schifo"
+
+AI: "Capisco, parliamo di una parete verticale con fessurazioni.
+     Per consigliarti il ciclo giusto ho bisogno di capire:
+
+     Le crepe sono:
+     □ Sottili (< 1mm) - tipo capello
+     □ Medie (1-3mm) - ci passa un foglio
+     □ Larghe (> 3mm) - ci passa una moneta
+     □ Strutturali - passanti, si vede dall'altra parte"
+
+MURATORE: "Medie, ci passa un foglio"
+
+AI: "Ok, fessurazioni medio-piccole su parete.
+     Ti consiglio questi cicli:
+
+     1. CICLO RASATURA BASE
+        - Stuccatura + rasante + pittura
+        - Per fessure non attive
+
+     2. CICLO CON RETE
+        - Stuccatura + rete in fibra + rasante
+        - Se le fessure potrebbero riaprirsi
+
+     3. CICLO ELASTOMERICO
+        - Prodotti elastici che seguono il movimento
+        - Se il muro "lavora"
+
+     Quale situazione ti sembra più simile?"
+
+MURATORE: sceglie → ciclo selezionato nel cantiere
+```
+
+### 10.3 Tecnologia
+
+| Aspetto | Scelta |
+|---------|--------|
+| **Provider** | Gemini API (Google, stesso ecosistema Flutter) |
+| **Offline** | ❌ No - richiede connessione |
+| **Lingua** | Italiano + lingue dell'app (RO, AL, PL) |
+| **Costo** | Basso/gratuito per volumi iniziali |
+
+### 10.4 Database Cicli
+L'AI propone cicli da un **database predefinito**:
+- Cicli creati da voi (esperti)
+- Categorizzati per tipo di intervento
+- Con materiali, fasi, note tecniche
+- L'AI NON inventa cicli, li cerca e propone
+
+### 10.5 Valore Aggiunto
+- **Muratori stranieri**: AI traduce anche la lingua, non solo il gergo
+- **Muratori esperti**: saltano l'AI, scelgono direttamente
+- **Apprendisti**: l'AI diventa formativa
+- **Voi admin**: vedete quali problemi sono più frequenti (dati!)
+
+---
+
+## 11. VALORE STRATEGICO DEI DATI
+
+### 11.1 Cosa Saprete (Intelligence di Mercato)
 
 | Dato | Valore per la Rivendita |
 |------|-------------------------|
@@ -301,7 +392,7 @@ Noi proprietari vediamo:
 | **Cronologia** | Chi lavora di più, chi è affidabile (molte connessioni stabili) |
 | **Trend** | Zone in crescita, nuovi cantieri, stagionalità |
 
-### 10.2 Come Usare i Dati (Esempi)
+### 11.2 Come Usare i Dati (Esempi)
 
 **Scenario 1 - Nuovo Cantiere**
 ```
@@ -325,7 +416,7 @@ Sistema: "Zona X: +40% cantieri ultimi 3 mesi"
 Azione: Valutare apertura nuovo punto vendita
 ```
 
-### 10.3 Privacy e GDPR
+### 11.3 Privacy e GDPR
 - [ ] Informativa privacy chiara (dati usati per "migliorare il servizio")
 - [ ] Dati aggregati, mai venduti a terzi
 - [ ] Utente può cancellare account e dati
@@ -376,11 +467,12 @@ Azione: Valutare apertura nuovo punto vendita
 - Creazione connessioni non funziona
 - (altro collega sta lavorando su questi)
 
-### 12.3 Stack App Mobile (da decidere)
-Opzioni:
-- [ ] React Native (riuso competenze React)
-- [ ] Flutter (performance native)
-- [ ] PWA (web app installabile, più veloce da sviluppare)
+### 12.3 Stack App Mobile
+**Decisione: Flutter**
+- Linguaggio: Dart
+- IDE: Android Studio (già disponibile)
+- Build iOS: Mac (già disponibile)
+- Una codebase → due piattaforme
 
 ---
 
