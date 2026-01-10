@@ -218,12 +218,13 @@ export default function Dashboard() {
   });
 
   // CopilotKit Actions - l'AI può eseguire queste azioni
+  // NOTA: I nomi parametri devono corrispondere a quelli del backend (dual-brain-v2.php)
   useCopilotAction({
     name: "fly_to",
     description: "Sposta la vista della mappa verso una località. Usa questo quando l'utente chiede di andare in un posto (es: 'vai a Roma', 'mostrami Milano').",
     parameters: [
       {
-        name: "location",
+        name: "query",  // Deve corrispondere al backend!
         type: "string",
         description: "Nome della località (es: 'Roma', 'Milano centro', 'Via Roma 1, Torino')",
         required: true
@@ -235,18 +236,18 @@ export default function Dashboard() {
         required: false
       }
     ],
-    handler: async ({ location, zoom }) => {
-      console.log('CopilotKit Action: fly_to', location, zoom);
+    handler: async ({ query, zoom }) => {
+      console.log('CopilotKit Action: fly_to', query, zoom);
       try {
-        const geoResult = await api.geocodeSearch(location);
+        const geoResult = await api.geocodeSearch(query);
         if (geoResult?.success && geoResult.results?.length > 0) {
           const loc = geoResult.results[0];
           setFlyToPosition({ lat: loc.lat, lng: loc.lng, zoom: zoom || 14 });
-          return `Ho spostato la mappa su ${location}`;
+          return `Ho spostato la mappa su ${query}`;
         }
-        return `Non ho trovato "${location}"`;
+        return `Non ho trovato "${query}"`;
       } catch (error) {
-        return `Errore nella ricerca di "${location}"`;
+        return `Errore nella ricerca di "${query}"`;
       }
     }
   });
@@ -258,19 +259,28 @@ export default function Dashboard() {
       {
         name: "style",
         type: "string",
-        description: "Stile mappa: 'satellite-v9' (satellitare), 'streets-v12' (stradale), 'dark-v11' (scuro), 'light-v11' (chiaro), 'outdoors-v12' (outdoor)",
+        description: "Stile mappa: 'satellite', 'streets', 'dark', 'light'",
         required: true
       }
     ],
     handler: async ({ style }) => {
       console.log('CopilotKit Action: set_map_style', style);
-      setMapStyleFromAi(style);
+      // Mappa i nomi semplificati ai nomi Mapbox completi
+      const styleMap: Record<string, string> = {
+        'satellite': 'satellite-v9',
+        'streets': 'streets-v12',
+        'dark': 'dark-v11',
+        'light': 'light-v11',
+        'outdoor': 'outdoors-v12',
+        'outdoors': 'outdoors-v12'
+      };
+      const mapboxStyle = styleMap[style] || style;
+      setMapStyleFromAi(mapboxStyle);
       const styleNames: Record<string, string> = {
-        'satellite-v9': 'satellitare',
-        'streets-v12': 'stradale',
-        'dark-v11': 'scuro',
-        'light-v11': 'chiaro',
-        'outdoors-v12': 'outdoor'
+        'satellite': 'satellitare',
+        'streets': 'stradale',
+        'dark': 'scuro',
+        'light': 'chiaro'
       };
       return `Ho cambiato la mappa in vista ${styleNames[style] || style}`;
     }
