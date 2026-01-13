@@ -87,6 +87,7 @@ $routes = [
     'GET:ai/copilot-runtime' => 'ai/copilot-runtime.php',
     'POST:ai/copilot-runtime' => 'ai/copilot-runtime.php',
     'POST:ai/dual-brain-v2' => 'ai/dual-brain-v2.php',
+    'POST:ai/neuron-dual-brain' => 'ai/neuron-dual-brain.php',
 
     // Agea Memory
     'GET:agea/memory' => 'agea/memory.php',

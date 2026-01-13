@@ -8,53 +8,42 @@
 
 namespace GenAgenta\Agents;
 
-use Inspector\Neuron\Agent;
-use Inspector\Neuron\Configuration;
+use NeuronAI\Agent;
+use NeuronAI\Providers\Gemini\Gemini;
+use GenAgenta\Tools\DelegateToEngineerTool;
+use GenAgenta\Tools\MapFlyToTool;
+use GenAgenta\Tools\MapSelectEntityTool;
+use GenAgenta\Tools\SetMapStyleTool;
 
 class AgeaAgent extends Agent
 {
-    protected string $name = 'agea';
-    protected string $description = 'L\'assistente AI veloce e conversazionale di GenAgenta';
+    protected string $geminiApiKey;
 
-    public function __construct(Configuration $configuration)
+    public function __construct(string $geminiApiKey)
     {
-        parent::__construct($configuration);
-
-        // Configura Gemini Flash per velocità
-        $this->model = 'gemini-2.5-flash';
-        $this->temperature = 0.7;
-        $this->maxTokens = 2048;
-
-        // Carica il prompt base
-        $this->loadSystemPrompt();
+        $this->geminiApiKey = $geminiApiKey;
     }
 
-    protected function loadSystemPrompt(): void
+    protected function provider(): Gemini
+    {
+        return new Gemini(
+            key: $this->geminiApiKey,
+            model: 'gemini-2.0-flash',
+            parameters: [
+                'generationConfig' => [
+                    'temperature' => 0.7,
+                    'maxOutputTokens' => 2048
+                ]
+            ]
+        );
+    }
+
+    public function instructions(): string
     {
         $promptFile = __DIR__ . '/../config/ai/prompt_base.txt';
         $basePrompt = file_exists($promptFile) ? file_get_contents($promptFile) : '';
 
-        // Placeholder utente (TODO: sostituire con dati reali da auth)
-        $userName = 'Genaro';
-        $userEmail = 'genaro@gruppogea.net';
-        $userRole = 'admin';
-        $aziendaId = '1';
-
-        if ($basePrompt) {
-            $basePrompt = str_replace([
-                '{{user_nome}}',
-                '{{user_email}}',
-                '{{user_ruolo}}',
-                '{{azienda_id}}'
-            ], [
-                $userName,
-                $userEmail,
-                $userRole,
-                $aziendaId
-            ], $basePrompt);
-        }
-
-        $this->systemPrompt = $basePrompt . <<<PROMPT
+        return $basePrompt . <<<PROMPT
 
 
 === DUAL BRAIN ARCHITECTURE ===
@@ -71,18 +60,15 @@ QUANDO DELEGARE ALL'INGEGNERE:
 
 TU GESTISCI DIRETTAMENTE:
 - Chat normale, saluti, conversazione
-- Azioni mappa (volare a coordinate, selezionare entità)
-- Creazione/modifica singole entità semplici
+- Azioni mappa (volare a coordinate, selezionare entità, cambiare stile)
 - Domande su dati già visibili nel contesto UI
 - Conferme e feedback veloci
 
 TOOLS DISPONIBILI:
 - delegate_to_engineer(task): Delega task complesso all'Ingegnere
-- query_database(sql): Query SQL semplice (max 1, per controlli rapidi)
-- map_fly_to(lat, lng, zoom): Sposta la vista mappa
-- map_select_entity(entity_id): Seleziona un'entità sulla mappa
-- create_entity(tipo, nome, indirizzo, ...): Crea nuova entità
-- update_entity(entity_id, fields): Aggiorna entità esistente
+- fly_to(query): Sposta la vista mappa a una località
+- select_entity(entity_id): Seleziona un'entità sulla mappa
+- set_map_style(style): Cambia lo stile della mappa
 
 WORKFLOW:
 1. Ricevi richiesta utente + contesto UI
@@ -95,37 +81,15 @@ PROMPT;
     }
 
     /**
-     * Processa un messaggio utente con contesto
+     * @return \NeuronAI\Tools\ToolInterface[]
      */
-    public function processMessage(string $message, array $context = []): array
+    protected function tools(): array
     {
-        // Inietta il contesto UI nel prompt
-        if (!empty($context)) {
-            $contextStr = "\n\n=== CONTESTO UI CORRENTE ===\n";
-            $contextStr .= json_encode($context, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
-            $contextStr .= "\n=== FINE CONTESTO ===\n";
-            $this->addContextToPrompt($contextStr);
-        }
-
-        // Esegui l'agent con streaming
-        $result = $this->run($message);
-
         return [
-            'agent' => 'agea',
-            'response' => $result['response'] ?? '',
-            'tool_calls' => $result['tool_calls'] ?? [],
-            'delegated' => $this->hasDelegated($result)
+            new DelegateToEngineerTool(),
+            new MapFlyToTool(),
+            new MapSelectEntityTool(),
+            new SetMapStyleTool(),
         ];
-    }
-
-    protected function hasDelegated(array $result): bool
-    {
-        $toolCalls = $result['tool_calls'] ?? [];
-        foreach ($toolCalls as $call) {
-            if ($call['name'] === 'delegate_to_engineer') {
-                return true;
-            }
-        }
-        return false;
     }
 }

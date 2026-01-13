@@ -39,7 +39,7 @@ $availableActions = [
         'name' => 'fly_to',
         'description' => 'Sposta la vista della mappa verso una località. Usa questo quando l\'utente chiede di andare in un posto.',
         'parameters' => [
-            ['name' => 'location', 'type' => 'string', 'description' => 'Nome della località', 'required' => true],
+            ['name' => 'query', 'type' => 'string', 'description' => 'Nome della località (es: Roma, Milano, Via Dante 1)', 'required' => true],
             ['name' => 'zoom', 'type' => 'number', 'description' => 'Livello di zoom (1-20)', 'required' => false]
         ]
     ],
@@ -99,10 +99,10 @@ if ($method === 'POST') {
     $rawInput = file_get_contents('php://input');
     $data = json_decode($rawInput, true) ?? [];
 
-    aiDebugLog('COPILOT_RUNTIME_POST', [
+    aiDebugLog('COPILOT_RUNTIME_POST_FULL', [
         'data_keys' => array_keys($data),
-        'has_messages' => isset($data['messages']),
-        'has_query' => isset($data['query'])
+        'raw_preview' => substr($rawInput, 0, 2000),
+        'data_structure' => $data
     ]);
 
     // CopilotKit manda {"method":"info"} per discovery
@@ -117,16 +117,64 @@ if ($method === 'POST') {
         exit;
     }
 
-    // Estrai il messaggio
-    $messages = $data['messages'] ?? [];
-    $lastMessage = end($messages);
+    // CopilotKit agent/connect - connessione iniziale (messaggi vuoti = OK)
+    if (isset($data['method']) && $data['method'] === 'agent/connect') {
+        aiDebugLog('COPILOT_AGENT_CONNECT', ['status' => 'connected']);
+        header('Content-Type: application/json');
+        echo json_encode([
+            'status' => 'connected',
+            'agent' => 'agea',
+            'capabilities' => ['streaming', 'tools']
+        ]);
+        exit;
+    }
+
+    // Estrai il messaggio - supporta diversi formati CopilotKit
+    // IMPORTANTE: prendi solo l'ultimo messaggio con role="user", ignora tool results
     $userMessage = '';
 
-    if (is_array($lastMessage)) {
-        $userMessage = $lastMessage['content'] ?? '';
-    } elseif (is_string($lastMessage)) {
-        $userMessage = $lastMessage;
+    // Helper per trovare l'ultimo messaggio utente
+    $findLastUserMessage = function($messages) {
+        if (!is_array($messages)) return '';
+        // Scorri al contrario per trovare l'ultimo messaggio user
+        for ($i = count($messages) - 1; $i >= 0; $i--) {
+            $msg = $messages[$i];
+            if (is_array($msg) && ($msg['role'] ?? '') === 'user') {
+                return $msg['content'] ?? '';
+            }
+        }
+        return '';
+    };
+
+    // Formato 1: messages array diretto
+    if (isset($data['messages']) && is_array($data['messages'])) {
+        $userMessage = $findLastUserMessage($data['messages']);
     }
+
+    // Formato 2: body.messages (CopilotKit runAgent)
+    if (empty($userMessage) && isset($data['body']['messages'])) {
+        $userMessage = $findLastUserMessage($data['body']['messages']);
+    }
+
+    // Formato 3: params.messages
+    if (empty($userMessage) && isset($data['params']['messages'])) {
+        $userMessage = $findLastUserMessage($data['params']['messages']);
+    }
+
+    // Formato 4: body.input (alcuni CopilotKit)
+    if (empty($userMessage) && isset($data['body']['input'])) {
+        $userMessage = $data['body']['input'];
+    }
+
+    // Formato 5: input diretto
+    if (empty($userMessage) && isset($data['input'])) {
+        $userMessage = $data['input'];
+    }
+
+    aiDebugLog('COPILOT_MESSAGE_EXTRACTED', [
+        'userMessage' => $userMessage,
+        'empty' => empty($userMessage)
+    ]);
 
     // GraphQL non supportato
     if (empty($userMessage) && isset($data['query'])) {
@@ -144,6 +192,7 @@ if ($method === 'POST') {
     if (empty($userMessage)) {
         http_response_code(400);
         header('Content-Type: application/json');
+        aiDebugLog('COPILOT_ERROR_EMPTY', ['data' => $data]);
         echo json_encode(['error' => 'Messaggio vuoto']);
         exit;
     }
@@ -154,6 +203,10 @@ if ($method === 'POST') {
 
     // Anche le readables di CopilotKit
     $readables = $data['readables'] ?? [];
+
+    // Estrai threadId e runId dalla richiesta CopilotKit (body.threadId, body.runId)
+    $threadId = $data['body']['threadId'] ?? uniqid('thread_');
+    $runId = $data['body']['runId'] ?? uniqid('run_');
 
     // ============================================
     // STREAMING SSE (AG-UI Protocol)
@@ -171,19 +224,36 @@ if ($method === 'POST') {
         if (ob_get_level()) ob_end_clean();
 
         // Funzione helper per inviare eventi SSE
-        $sendEvent = function($event, $data) {
-            echo "event: {$event}\n";
-            echo "data: " . json_encode($data) . "\n\n";
+        // CopilotKit vuole SCREAMING_SNAKE_CASE per type + camelCase per campi
+        $sendEvent = function($type, $payload) {
+            $event = array_merge(['type' => $type], $payload);
+            echo "data: " . json_encode($event) . "\n\n";
             flush();
         };
 
         // RUN_STARTED
-        $runId = uniqid('run_');
-        $sendEvent('RUN_STARTED', ['runId' => $runId]);
+        $sendEvent('RUN_STARTED', ['threadId' => $threadId, 'runId' => $runId]);
 
-        // TEXT_MESSAGE_START
+        // TEXT_MESSAGE_START - richiede messageId e role
         $messageId = uniqid('msg_');
-        $sendEvent('TEXT_MESSAGE_START', ['messageId' => $messageId]);
+        $sendEvent('TEXT_MESSAGE_START', ['messageId' => $messageId, 'role' => 'assistant']);
+
+        // Prepara history per dual-brain (ultimi 20 messaggi per contesto)
+        $history = [];
+        $allMessages = $data['body']['messages'] ?? $data['messages'] ?? [];
+        $recentMessages = array_slice($allMessages, -20);
+        foreach ($recentMessages as $msg) {
+            if (!is_array($msg)) continue;
+            $role = $msg['role'] ?? '';
+            $content = $msg['content'] ?? '';
+            // Salta messaggi vuoti o tool results
+            if (empty($content) || $role === 'tool') continue;
+            // Mappa ruoli per Gemini
+            $history[] = [
+                'role' => $role === 'assistant' ? 'model' : 'user',
+                'content' => is_string($content) ? $content : json_encode($content)
+            ];
+        }
 
         // Chiama dual-brain-v2
         $ch = curl_init('https://genagenta.gruppogea.net/api/ai/dual-brain-v2');
@@ -191,6 +261,7 @@ if ($method === 'POST') {
             CURLOPT_POST => true,
             CURLOPT_POSTFIELDS => json_encode([
                 'message' => $userMessage,
+                'history' => $history,
                 'context' => array_merge($copilotContext, ['readables' => $readables])
             ]),
             CURLOPT_RETURNTRANSFER => true,
@@ -204,52 +275,67 @@ if ($method === 'POST') {
         curl_close($ch);
 
         if ($httpCode !== 200) {
-            $sendEvent('TEXT_MESSAGE_CONTENT', ['content' => 'Errore comunicazione con Dual Brain']);
+            $sendEvent('TEXT_MESSAGE_CONTENT', ['messageId' => $messageId, 'delta' => 'Errore comunicazione con Dual Brain']);
             $sendEvent('TEXT_MESSAGE_END', ['messageId' => $messageId]);
-            $sendEvent('RUN_FINISHED', ['runId' => $runId]);
+            $sendEvent('RUN_FINISHED', ['threadId' => $threadId, 'runId' => $runId]);
             exit;
         }
 
         $result = json_decode($response, true);
         $responseText = $result['delegated'] ?? false
             ? trim(($result['agea_message'] ?? '') . "\n\n" . ($result['engineer_result'] ?? ''))
-            : ($result['response'] ?? 'Nessuna risposta');
+            : ($result['response'] ?? '');
 
-        // Simula streaming token by token (per effetto "typing")
-        $words = explode(' ', $responseText);
-        foreach ($words as $i => $word) {
-            $sendEvent('TEXT_MESSAGE_CONTENT', ['content' => ($i > 0 ? ' ' : '') . $word]);
-            usleep(30000); // 30ms tra le parole
-        }
-
-        // Se c'è un tool_call, invialo
+        // Se c'è un tool_call, invialo DOPO TEXT_MESSAGE_START ma con parentMessageId
         if (isset($result['tool_call'])) {
             $toolCallId = uniqid('tc_');
+            $toolArgs = $result['tool_call']['args'] ?? [];
+            $toolArgsJson = json_encode($toolArgs);
+
+            // Log per debug
+            aiDebugLog('SSE_TOOL_CALL', [
+                'toolCallId' => $toolCallId,
+                'toolName' => $result['tool_call']['name'],
+                'args' => $toolArgs,
+                'argsJson' => $toolArgsJson,
+                'parentMessageId' => $messageId
+            ]);
+
             $sendEvent('TOOL_CALL_START', [
                 'toolCallId' => $toolCallId,
-                'name' => $result['tool_call']['name']
+                'toolCallName' => $result['tool_call']['name'],
+                'parentMessageId' => $messageId  // Lega il tool call al messaggio
             ]);
             $sendEvent('TOOL_CALL_ARGS', [
                 'toolCallId' => $toolCallId,
-                'args' => json_encode($result['tool_call']['args'] ?? [])
+                'delta' => $toolArgsJson
             ]);
             $sendEvent('TOOL_CALL_END', ['toolCallId' => $toolCallId]);
+        }
+
+        // Streaming token by token (per effetto "typing")
+        // IMPORTANTE: delta non può essere vuoto, quindi skippa se non c'è testo
+        $responseText = trim($responseText);
+        if (!empty($responseText)) {
+            $words = explode(' ', $responseText);
+            foreach ($words as $i => $word) {
+                if (empty(trim($word))) continue; // Skip parole vuote
+                $sendEvent('TEXT_MESSAGE_CONTENT', [
+                    'messageId' => $messageId,
+                    'delta' => ($i > 0 ? ' ' : '') . $word
+                ]);
+                usleep(20000); // 20ms tra le parole
+            }
         }
 
         // TEXT_MESSAGE_END
         $sendEvent('TEXT_MESSAGE_END', ['messageId' => $messageId]);
 
-        // STATE_SNAPSHOT (opzionale - stato aggiornato)
-        if ($result['delegated'] ?? false) {
-            $sendEvent('STATE_SNAPSHOT', [
-                'agent' => $result['agent'] ?? 'agea',
-                'delegated' => true,
-                'engineer_worked' => true
-            ]);
-        }
+        // STATE_DELTA rimosso - causava errori "path does not exist"
+        // Lo stato viene gestito internamente da CopilotKit
 
         // RUN_FINISHED
-        $sendEvent('RUN_FINISHED', ['runId' => $runId]);
+        $sendEvent('RUN_FINISHED', ['threadId' => $threadId, 'runId' => $runId]);
         exit;
     }
 

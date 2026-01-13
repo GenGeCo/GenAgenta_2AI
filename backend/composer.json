@@ -1,0 +1,19 @@
+{
+    "name": "genagenta/backend",
+    "description": "GenAgenta Backend - Piattaforma per l'Edilizia con AI",
+    "type": "project",
+    "require": {
+        "php": ">=8.1",
+        "inspector-apm/neuron-ai": "^1.17"
+    },
+    "autoload": {
+        "psr-4": {
+            "GenAgenta\\Agents\\": "agents/",
+            "GenAgenta\\Tools\\": "tools/"
+        }
+    },
+    "config": {
+        "optimize-autoloader": true,
+        "sort-packages": true
+    }
+}

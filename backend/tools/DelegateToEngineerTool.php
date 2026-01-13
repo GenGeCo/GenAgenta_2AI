@@ -7,34 +7,38 @@
 
 namespace GenAgenta\Tools;
 
-use Inspector\Neuron\Tool;
+use NeuronAI\Tools\Tool;
+use NeuronAI\Tools\ToolProperty;
+use NeuronAI\Tools\PropertyType;
 
 class DelegateToEngineerTool extends Tool
 {
-    protected string $name = 'delegate_to_engineer';
-    protected string $description = 'Delega una richiesta complessa all\'Ingegnere (Gemini Pro) che ha accesso al database';
-
-    protected array $parameters = [
-        'type' => 'object',
-        'properties' => [
-            'task' => [
-                'type' => 'string',
-                'description' => 'Descrizione chiara e dettagliata del task da eseguire'
-            ]
-        ],
-        'required' => ['task']
-    ];
-
-    public function execute(array $arguments): array
+    public function __construct()
     {
-        $task = $arguments['task'] ?? '';
+        parent::__construct(
+            'delegate_to_engineer',
+            'Delega una richiesta complessa all\'Ingegnere (Gemini Pro) che ha accesso al database'
+        );
+    }
 
-        // Questo tool non esegue direttamente, ma segnala la necessità di delegazione
-        // La gestione vera sarà fatta nel controller
+    protected function properties(): array
+    {
         return [
+            new ToolProperty(
+                name: 'task',
+                type: PropertyType::STRING,
+                description: 'Descrizione chiara e dettagliata del task da eseguire',
+                required: true
+            ),
+        ];
+    }
+
+    public function __invoke(string $task): string
+    {
+        return json_encode([
             'delegated' => true,
             'task' => $task,
             'message' => 'Task delegato all\'Ingegnere'
-        ];
+        ]);
     }
 }

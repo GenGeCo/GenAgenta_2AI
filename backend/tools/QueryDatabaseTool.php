@@ -7,44 +7,49 @@
 
 namespace GenAgenta\Tools;
 
-use Inspector\Neuron\Tool;
+use NeuronAI\Tools\Tool;
+use NeuronAI\Tools\ToolProperty;
+use NeuronAI\Tools\PropertyType;
 use PDO;
 use Exception;
 
 class QueryDatabaseTool extends Tool
 {
-    protected string $name = 'query_database';
-    protected string $description = 'Esegue una query SQL di SOLA LETTURA sul database MySQL';
-
-    protected array $parameters = [
-        'type' => 'object',
-        'properties' => [
-            'sql' => [
-                'type' => 'string',
-                'description' => 'Query SQL SELECT (no INSERT/UPDATE/DELETE)'
-            ],
-            'reason' => [
-                'type' => 'string',
-                'description' => 'Breve spiegazione del perché serve questa query'
-            ]
-        ],
-        'required' => ['sql']
-    ];
-
-    public function execute(array $arguments): array
+    public function __construct()
     {
-        $sql = $arguments['sql'] ?? '';
-        $reason = $arguments['reason'] ?? 'N/A';
+        parent::__construct(
+            'query_database',
+            'Esegue una query SQL di SOLA LETTURA sul database MySQL'
+        );
+    }
 
-        // Log della query per debugging
+    protected function properties(): array
+    {
+        return [
+            new ToolProperty(
+                name: 'sql',
+                type: PropertyType::STRING,
+                description: 'Query SQL SELECT (no INSERT/UPDATE/DELETE)',
+                required: true
+            ),
+            new ToolProperty(
+                name: 'reason',
+                type: PropertyType::STRING,
+                description: 'Breve spiegazione del perché serve questa query',
+                required: false
+            ),
+        ];
+    }
+
+    public function __invoke(string $sql, ?string $reason = null): string
+    {
         error_log("QueryDatabaseTool: {$reason} | SQL: {$sql}");
 
-        // Sicurezza: SOLO SELECT
         if (!preg_match('/^\s*SELECT/i', trim($sql))) {
-            return [
+            return json_encode([
                 'success' => false,
                 'error' => 'Solo query SELECT sono permesse per motivi di sicurezza'
-            ];
+            ]);
         }
 
         try {
@@ -52,25 +57,24 @@ class QueryDatabaseTool extends Tool
             $stmt = $db->query($sql);
             $results = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-            return [
+            return json_encode([
                 'success' => true,
                 'rows' => $results,
                 'count' => count($results),
                 'query' => $sql
-            ];
+            ]);
         } catch (Exception $e) {
             error_log("QueryDatabaseTool Error: " . $e->getMessage());
-            return [
+            return json_encode([
                 'success' => false,
                 'error' => $e->getMessage(),
                 'query' => $sql
-            ];
+            ]);
         }
     }
 
     protected function getDB(): PDO
     {
-        // Usa la stessa funzione del backend
         require_once __DIR__ . '/../config/database.php';
         return getDB();
     }

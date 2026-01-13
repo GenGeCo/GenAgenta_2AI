@@ -7,45 +7,38 @@
 
 namespace GenAgenta\Tools;
 
-use Inspector\Neuron\Tool;
+use NeuronAI\Tools\Tool;
+use NeuronAI\Tools\ToolProperty;
+use NeuronAI\Tools\PropertyType;
 
 class MapFlyToTool extends Tool
 {
-    protected string $name = 'map_fly_to';
-    protected string $description = 'Sposta la vista della mappa a coordinate specifiche con animazione';
-
-    protected array $parameters = [
-        'type' => 'object',
-        'properties' => [
-            'lat' => [
-                'type' => 'number',
-                'description' => 'Latitudine (es: 45.4642 per Milano)'
-            ],
-            'lng' => [
-                'type' => 'number',
-                'description' => 'Longitudine (es: 9.1900 per Milano)'
-            ],
-            'zoom' => [
-                'type' => 'number',
-                'description' => 'Livello di zoom (1-20, default 12)',
-                'default' => 12
-            ]
-        ],
-        'required' => ['lat', 'lng']
-    ];
-
-    public function execute(array $arguments): array
+    public function __construct()
     {
-        $lat = $arguments['lat'] ?? null;
-        $lng = $arguments['lng'] ?? null;
-        $zoom = $arguments['zoom'] ?? 12;
+        parent::__construct(
+            'fly_to',
+            'Sposta la vista della mappa a una località specifica (città, indirizzo, coordinate)'
+        );
+    }
 
+    protected function properties(): array
+    {
         return [
-            'action' => 'map_fly_to',
-            'lat' => $lat,
-            'lng' => $lng,
-            'zoom' => $zoom,
-            'message' => "Spostamento mappa a {$lat}, {$lng} (zoom {$zoom})"
+            new ToolProperty(
+                name: 'query',
+                type: PropertyType::STRING,
+                description: 'Nome della località (es: "Roma", "Milano Centro", "Via Roma 1, Napoli")',
+                required: true
+            ),
         ];
+    }
+
+    public function __invoke(string $query): string
+    {
+        return json_encode([
+            'action' => 'fly_to',
+            'query' => $query,
+            'message' => "Spostamento mappa a: {$query}"
+        ]);
     }
 }

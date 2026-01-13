@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { useCopilotReadable, useCopilotAction } from '@copilotkit/react-core';
-import { CopilotPopup } from '@copilotkit/react-ui';
+import { CopilotChat } from '@copilotkit/react-ui';
 import '@copilotkit/react-ui/styles.css';
 import { useAuth } from '../hooks/useAuth';
 import { useNeuroni, useSinapsi, useTipi, useTipologie, useInvalidateData } from '../hooks/useData';
@@ -236,8 +236,22 @@ export default function Dashboard() {
         required: false
       }
     ],
-    handler: async ({ query, zoom }) => {
-      console.log('CopilotKit Action: fly_to', query, zoom);
+    handler: async (params: Record<string, unknown>) => {
+      // Debug: log TUTTO quello che arriva
+      console.log('CopilotKit Action fly_to - RAW params:', JSON.stringify(params, null, 2));
+      console.log('CopilotKit Action fly_to - params keys:', params ? Object.keys(params) : 'null');
+
+      // Estrai query e zoom - prova vari formati
+      const query = (params?.query || (params as {args?: {query?: string}})?.args?.query || params?.location) as string | undefined;
+      const zoom = (params?.zoom || (params as {args?: {zoom?: number}})?.args?.zoom) as number | undefined;
+
+      console.log('CopilotKit Action: fly_to extracted:', query, zoom);
+
+      if (!query) {
+        console.error('fly_to: query mancante!', params);
+        return `Errore: location/query non specificata`;
+      }
+
       try {
         const geoResult = await api.geocodeSearch(query);
         if (geoResult?.success && geoResult.results?.length > 0) {
@@ -1190,20 +1204,69 @@ export default function Dashboard() {
         }}
       />
 
-      {/* Agea Chat - CopilotKit */}
-      <CopilotPopup
-        labels={{
-          title: "Agea",
-          initial: `Ciao ${user?.nome?.split(' ')[0] || 'utente'}! Sono Agea, la tua assistente. Cosa vuoi fare?`,
-          placeholder: "Scrivi un messaggio...",
-        }}
-        defaultOpen={showAiChat}
-        clickOutsideToClose={true}
-        onSetOpen={(open) => {
-          if (!open) setShowAiChat(false);
-        }}
-        className="copilot-popup-genagenta"
-      />
+      {/* Agea Chat - CopilotKit (si apre dal pallino in header) */}
+      {showAiChat && (
+        <div
+          style={{
+            position: 'fixed',
+            top: '60px',
+            right: '16px',
+            width: '380px',
+            height: '500px',
+            zIndex: 1000,
+            borderRadius: '12px',
+            overflow: 'hidden',
+            boxShadow: '0 8px 32px rgba(0,0,0,0.3)',
+            background: 'var(--bg-secondary, #1e1e2e)',
+            display: 'flex',
+            flexDirection: 'column',
+          }}
+        >
+          {/* Header chat */}
+          <div style={{
+            padding: '12px 16px',
+            borderBottom: '1px solid rgba(255,255,255,0.1)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            background: 'rgba(59, 130, 246, 0.1)',
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <div style={{
+                width: '10px',
+                height: '10px',
+                borderRadius: '50%',
+                background: 'linear-gradient(135deg, #3b82f6, #8b5cf6)',
+                boxShadow: '0 0 8px rgba(59, 130, 246, 0.5)',
+              }} />
+              <span style={{ fontWeight: 600, color: 'white' }}>Agea</span>
+            </div>
+            <button
+              onClick={() => setShowAiChat(false)}
+              style={{
+                background: 'transparent',
+                border: 'none',
+                color: 'rgba(255,255,255,0.6)',
+                cursor: 'pointer',
+                fontSize: '18px',
+                padding: '4px',
+              }}
+            >
+              ✕
+            </button>
+          </div>
+          {/* Chat content - wrapper per gestire altezza */}
+          <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+            <CopilotChat
+              labels={{
+                initial: `Ciao ${user?.nome?.split(' ')[0] || 'utente'}! Sono Agea, la tua assistente. Cosa vuoi fare?`,
+                placeholder: "Scrivi un messaggio...",
+              }}
+              className="copilot-chat-embedded"
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 }

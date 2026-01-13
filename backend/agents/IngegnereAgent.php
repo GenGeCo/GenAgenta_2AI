@@ -7,24 +7,36 @@
 
 namespace GenAgenta\Agents;
 
-use Inspector\Neuron\Agent;
-use Inspector\Neuron\Configuration;
+use NeuronAI\Agent;
+use NeuronAI\Providers\Gemini\Gemini;
+use GenAgenta\Tools\QueryDatabaseTool;
 
 class IngegnereAgent extends Agent
 {
-    protected string $name = 'ingegnere';
-    protected string $description = 'L\'analista AI profondo con accesso al database di GenAgenta';
+    protected string $geminiApiKey;
 
-    public function __construct(Configuration $configuration)
+    public function __construct(string $geminiApiKey)
     {
-        parent::__construct($configuration);
+        $this->geminiApiKey = $geminiApiKey;
+    }
 
-        // Configura Gemini Pro per ragionamento profondo
-        $this->model = 'gemini-2.5-pro';
-        $this->temperature = 0.2;
-        $this->maxTokens = 8192;
+    protected function provider(): Gemini
+    {
+        return new Gemini(
+            key: $this->geminiApiKey,
+            model: 'gemini-2.0-flash-thinking-exp',  // Pro per ragionamento profondo
+            parameters: [
+                'generationConfig' => [
+                    'temperature' => 0.2,
+                    'maxOutputTokens' => 8192
+                ]
+            ]
+        );
+    }
 
-        $this->systemPrompt = <<<PROMPT
+    public function instructions(): string
+    {
+        return <<<PROMPT
 Sei l'Ingegnere, il cervello analitico di GenAgenta.
 
 HAI ACCESSO AL DATABASE tramite il tool query_database.
@@ -56,11 +68,6 @@ INSTRUCTIONS:
 6. Se non ci sono dati, comunicalo chiaramente
 7. Fornisci insights e suggerimenti basati sui dati reali
 
-TOOLS AVAILABLE:
-- query_database(sql, reason): Esegui query SQL SELECT
-- calculate(expression): Calcola espressioni matematiche
-- analyze_trend(data, timeframe): Analizza trend temporali
-
 OUTPUT FORMAT:
 - Inizia con un riassunto esecutivo (1-2 frasi)
 - Poi dettagli numerici e analisi
@@ -69,38 +76,12 @@ PROMPT;
     }
 
     /**
-     * Processa un task delegato da Agea
+     * @return \NeuronAI\Tools\ToolInterface[]
      */
-    public function processTask(string $task, string $originalMessage, array $context = []): array
+    protected function tools(): array
     {
-        $prompt = <<<PROMPT
-TASK DELEGATO DA AGEA: {$task}
-RICHIESTA ORIGINALE UTENTE: {$originalMessage}
-
-Esegui il task utilizzando i tools disponibili.
-Rispondi in modo completo ma conciso.
-PROMPT;
-
-        // Esegui l'agent
-        $result = $this->run($prompt);
-
         return [
-            'agent' => 'engineer',
-            'response' => $result['response'] ?? '',
-            'queries_executed' => $this->countQueries($result),
-            'tool_calls' => $result['tool_calls'] ?? []
+            new QueryDatabaseTool(),
         ];
-    }
-
-    protected function countQueries(array $result): int
-    {
-        $count = 0;
-        $toolCalls = $result['tool_calls'] ?? [];
-        foreach ($toolCalls as $call) {
-            if ($call['name'] === 'query_database') {
-                $count++;
-            }
-        }
-        return $count;
     }
 }

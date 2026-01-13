@@ -444,6 +444,13 @@ body {
    CopilotKit - Stile GenAgenta per Agea
    ================================================ */
 
+/* Container chat - prende tutta l'altezza disponibile */
+.copilot-chat-embedded {
+  height: 100% !important;
+  display: flex !important;
+  flex-direction: column !important;
+}
+
 /* Popup container */
 .copilot-popup-genagenta {
   --copilot-kit-primary-color: #3b82f6 !important;
@@ -503,13 +510,42 @@ body {
   margin: 4px 0 !important;
 }
 
-/* Tasto toggle (FAB) */
-[data-scope="chat"][data-part="trigger"] {
-  background: linear-gradient(135deg, #3b82f6, #8b5cf6) !important;
-  box-shadow: 0 4px 20px rgba(59, 130, 246, 0.4) !important;
+/* ============================================
+   NASCONDI FAB CopilotKit - usiamo il nostro pallino nell'header
+   Versione aggressiva per CopilotKit 1.50+
+   ============================================ */
+
+/* Selettori data-scope (v1.x) */
+[data-scope="chat"][data-part="trigger"],
+[data-scope="chat"][data-part="floating-button"],
+[data-scope="popup"][data-part="trigger"],
+[data-scope="popup"][data-part="floating-button"] {
+  display: none !important;
+  visibility: hidden !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+  width: 0 !important;
+  height: 0 !important;
+  position: absolute !important;
+  left: -9999px !important;
 }
 
-[data-scope="chat"][data-part="trigger"]:hover {
-  transform: scale(1.05);
-  box-shadow: 0 6px 24px rgba(59, 130, 246, 0.5) !important;
+/* Selettori classe generici */
+.copilotkit-button,
+[class*="copilotkit"][class*="trigger"],
+[class*="copilotkit"][class*="fab"],
+[class*="copilotkit"][class*="floating"],
+[class*="copilot-popup"][class*="trigger"],
+button[class*="copilot"][class*="open"],
+div[class*="copilot"][class*="trigger"],
+[class*="CopilotPopup_trigger"],
+[class*="CopilotChat_trigger"] {
+  display: none !important;
+  visibility: hidden !important;
+}
+
+/* Cerchio blu flottante in basso a destra - catch-all per CopilotKit FAB */
+div[style*="position: fixed"][style*="bottom"][style*="right"][style*="border-radius: 50%"],
+button[style*="position: fixed"][style*="bottom"][style*="right"][style*="border-radius: 50%"] {
+  display: none !important;
 }

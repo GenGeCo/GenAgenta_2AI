@@ -11,6 +11,8 @@ backend/config/credentials.php
 *.ppk
 chiave.md
 chiave.rtfd/
+hetzner_genagenta
+nul
 
 # File di sessione e documentazione temporanea
 SESSIONE_*.md

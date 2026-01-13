@@ -24,13 +24,10 @@ header('X-Accel-Buffering: no'); // Nginx: disabilita buffering
 require_once __DIR__ . '/../../vendor/autoload.php';
 require_once __DIR__ . '/../../includes/helpers.php';
 
-use Inspector\Neuron\Configuration;
+use NeuronAI\Chat\Messages\UserMessage;
+use NeuronAI\AgentInterface;
 use GenAgenta\Agents\AgeaAgent;
 use GenAgenta\Agents\IngegnereAgent;
-use GenAgenta\Tools\QueryDatabaseTool;
-use GenAgenta\Tools\DelegateToEngineerTool;
-use GenAgenta\Tools\MapFlyToTool;
-use GenAgenta\Tools\MapSelectEntityTool;
 
 /**
  * Invia evento SSE
@@ -43,7 +40,7 @@ function sendSSE(string $event, array $data): void
 }
 
 /**
- * Invia messaggio di testo (può essere streamato token by token in futuro)
+ * Invia messaggio di testo
  */
 function sendMessage(string $text, string $source = 'agea'): void
 {
@@ -58,7 +55,7 @@ function sendMessage(string $text, string $source = 'agea'): void
 /**
  * Invia tool call
  */
-function sendToolCall(string $toolName, array $args, string $result = null): void
+function sendToolCall(string $toolName, array $args, ?string $result = null): void
 {
     sendSSE('tool_call', [
         'tool' => $toolName,
@@ -66,6 +63,56 @@ function sendToolCall(string $toolName, array $args, string $result = null): voi
         'result' => $result,
         'timestamp' => time()
     ]);
+}
+
+/**
+ * Observer per catturare i tool calls
+ */
+class ToolObserver implements \SplObserver
+{
+    private array $toolCalls = [];
+    private bool $delegated = false;
+    private string $delegatedTask = '';
+
+    public function update(\SplSubject $subject, ?string $event = null, mixed $data = null): void
+    {
+        if ($event === 'tool-calling') {
+            // Tool sta per essere chiamato
+            $tool = $data->tool;
+            $toolName = $tool->getName();
+            $args = $tool->getArguments();
+
+            sendToolCall($toolName, $args);
+
+            // Verifica se è una delegazione
+            if ($toolName === 'delegate_to_engineer') {
+                $this->delegated = true;
+                $this->delegatedTask = $args['task'] ?? '';
+            }
+        } elseif ($event === 'tool-called') {
+            // Tool è stato eseguito
+            $tool = $data->tool;
+            $this->toolCalls[] = [
+                'name' => $tool->getName(),
+                'result' => $tool->getResult()
+            ];
+        }
+    }
+
+    public function isDelegated(): bool
+    {
+        return $this->delegated;
+    }
+
+    public function getDelegatedTask(): string
+    {
+        return $this->delegatedTask;
+    }
+
+    public function getToolCalls(): array
+    {
+        return $this->toolCalls;
+    }
 }
 
 try {
@@ -80,18 +127,13 @@ try {
     }
 
     // Carica config Gemini
-    $config = require __DIR__ . '/../../config/config.php';
-    $apiKey = $config['gemini_api_key'] ?? getenv('GEMINI_API_KEY');
+    require_once __DIR__ . '/../../config/config.php';
+    $apiKey = GEMINI_API_KEY;
 
     if (!$apiKey) {
-        sendSSE('error', ['message' => 'API Key mancante']);
+        sendSSE('error', ['message' => 'GEMINI_API_KEY mancante']);
         exit;
     }
-
-    // Configura Neuron AI
-    $neuronConfig = new Configuration();
-    $neuronConfig->setApiKey($apiKey);
-    $neuronConfig->setProvider('gemini'); // Gemini API
 
     sendSSE('run_started', ['agent' => 'agea', 'message' => $message]);
 
@@ -99,36 +141,37 @@ try {
     // FASE 1: AGEA valuta la richiesta
     // ============================================
 
-    $agea = new AgeaAgent($neuronConfig);
+    $agea = new AgeaAgent($apiKey);
 
-    // Registra tools per Agea
-    $agea->registerTool(new DelegateToEngineerTool());
-    $agea->registerTool(new QueryDatabaseTool());
-    $agea->registerTool(new MapFlyToTool());
-    $agea->registerTool(new MapSelectEntityTool());
+    // Aggiungi observer per catturare tool calls
+    $observer = new ToolObserver();
+    $agea->observe($observer);
 
     sendSSE('agent_thinking', ['agent' => 'agea']);
 
-    // Processa con Agea
-    $ageaResult = $agea->processMessage($message, $context);
-
-    // Se Agea ha chiamato tools, invia gli eventi
-    if (!empty($ageaResult['tool_calls'])) {
-        foreach ($ageaResult['tool_calls'] as $toolCall) {
-            sendToolCall(
-                $toolCall['name'],
-                $toolCall['arguments'],
-                json_encode($toolCall['result'] ?? null)
-            );
-        }
+    // Prepara il messaggio con contesto
+    $contextStr = '';
+    if (!empty($context)) {
+        $contextStr = "\n\n=== CONTESTO UI ===\n" . json_encode($context, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE) . "\n===\n\n";
     }
 
+    $userMessage = new UserMessage($contextStr . $message);
+
+    // Chat con Agea
+    $ageaResponse = $agea->chat($userMessage);
+    $ageaContent = $ageaResponse->getContent();
+
+    // Verifica se è stata fatta una delegazione tramite tool
+    $delegated = $observer->isDelegated();
+    $delegatedTask = $observer->getDelegatedTask();
+
     // Se Agea NON ha delegato, risposta diretta
-    if (!$ageaResult['delegated']) {
-        sendMessage($ageaResult['response'], 'agea');
+    if (!$delegated) {
+        sendMessage($ageaContent, 'agea');
         sendSSE('run_finished', [
             'agent' => 'agea',
-            'delegated' => false
+            'delegated' => false,
+            'tool_calls' => $observer->getToolCalls()
         ]);
         exit;
     }
@@ -137,44 +180,33 @@ try {
     // FASE 2: INGEGNERE con analisi profonda
     // ============================================
 
-    sendSSE('delegation', ['from' => 'agea', 'to' => 'engineer']);
+    sendSSE('delegation', ['from' => 'agea', 'to' => 'engineer', 'task' => $delegatedTask]);
     sendSSE('agent_thinking', ['agent' => 'engineer']);
 
-    // Trova il task delegato
-    $delegatedTask = '';
-    foreach ($ageaResult['tool_calls'] as $toolCall) {
-        if ($toolCall['name'] === 'delegate_to_engineer') {
-            $delegatedTask = $toolCall['arguments']['task'] ?? $message;
-            break;
-        }
-    }
+    $engineer = new IngegnereAgent($apiKey);
 
-    $engineer = new IngegnereAgent($neuronConfig);
+    // Observer per l'ingegnere
+    $engineerObserver = new ToolObserver();
+    $engineer->observe($engineerObserver);
 
-    // Registra tools per Ingegnere
-    $engineer->registerTool(new QueryDatabaseTool());
+    // Prepara messaggio per l'ingegnere
+    $engineerMessage = new UserMessage(
+        "TASK DELEGATO DA AGEA: {$delegatedTask}\n" .
+        "RICHIESTA ORIGINALE UTENTE: {$message}\n\n" .
+        "Esegui il task utilizzando i tools disponibili."
+    );
 
-    // Processa con Ingegnere
-    $engineerResult = $engineer->processTask($delegatedTask, $message, $context);
-
-    // Invia tool calls dell'Ingegnere
-    if (!empty($engineerResult['tool_calls'])) {
-        foreach ($engineerResult['tool_calls'] as $toolCall) {
-            sendToolCall(
-                $toolCall['name'],
-                $toolCall['arguments'],
-                json_encode($toolCall['result'] ?? null)
-            );
-        }
-    }
+    // Chat con Ingegnere
+    $engineerResponse = $engineer->chat($engineerMessage);
+    $engineerContent = $engineerResponse->getContent();
 
     // Risposta finale dell'Ingegnere
-    sendMessage($engineerResult['response'], 'engineer');
+    sendMessage($engineerContent, 'engineer');
 
     sendSSE('run_finished', [
         'agent' => 'engineer',
         'delegated' => true,
-        'queries_executed' => $engineerResult['queries_executed'] ?? 0
+        'tool_calls' => $engineerObserver->getToolCalls()
     ]);
 
 } catch (Exception $e) {
