@@ -24,6 +24,7 @@ if (!$apiKey) {
 // Leggi input
 $data = getJsonBody();
 $message = $data['message'] ?? '';
+$history = $data['history'] ?? [];  // History messaggi precedenti
 $context = $data['context'] ?? [];
 
 if (empty($message)) {
@@ -37,6 +38,8 @@ header('Content-Type: application/json');
 // Log messaggio in ingresso con dettagli contesto
 aiDebugLog('DUAL_BRAIN_REQUEST', [
     'message' => substr($message, 0, 200),
+    'history_count' => count($history),
+    'history_preview' => array_slice($history, -3),  // Ultimi 3 messaggi per debug
     'has_context' => !empty($context),
     'has_copilotContext' => !empty($context['copilotContext']),
     'has_selectedEntity' => !empty($context['selectedEntity']),
@@ -46,8 +49,9 @@ aiDebugLog('DUAL_BRAIN_REQUEST', [
 
 /**
  * Chiama Gemini API
+ * @param string $systemInstruction - System instruction separata (best practice Gemini)
  */
-function callGemini($apiKey, $model, $conversation, $tools = []) {
+function callGemini($apiKey, $model, $conversation, $tools = [], $systemInstruction = '') {
     $url = "https://generativelanguage.googleapis.com/v1beta/models/{$model}:generateContent?key={$apiKey}";
 
     $payload = [
@@ -58,9 +62,26 @@ function callGemini($apiKey, $model, $conversation, $tools = []) {
         ]
     ];
 
+    // System instruction separata (best practice Gemini - non nel contents!)
+    if (!empty($systemInstruction)) {
+        $payload['system_instruction'] = [
+            'parts' => [['text' => $systemInstruction]]
+        ];
+    }
+
     if (!empty($tools)) {
         $payload['tools'] = [['functionDeclarations' => $tools]];
     }
+
+    // DEBUG: Log payload completo per diagnostica
+    aiDebugLog('GEMINI_PAYLOAD', [
+        'model' => $model,
+        'has_system_instruction' => !empty($systemInstruction),
+        'system_instruction_length' => strlen($systemInstruction),
+        'contents_count' => count($conversation),
+        'contents_roles' => array_map(fn($c) => $c['role'] ?? 'unknown', $conversation),
+        'tools_count' => count($tools)
+    ]);
 
     $ch = curl_init($url);
     curl_setopt_array($ch, [
@@ -81,6 +102,23 @@ function callGemini($apiKey, $model, $conversation, $tools = []) {
     }
 
     $data = json_decode($response, true);
+
+    // Log info sul caching (Gemini 2.5 implicit caching)
+    $usageMetadata = $data['usageMetadata'] ?? [];
+    if (!empty($usageMetadata)) {
+        $cachedTokens = $usageMetadata['cachedContentTokenCount'] ?? 0;
+        $totalTokens = $usageMetadata['promptTokenCount'] ?? 0;
+        $cachePercent = $totalTokens > 0 ? round(($cachedTokens / $totalTokens) * 100, 1) : 0;
+
+        aiDebugLog('GEMINI_CACHE_STATS', [
+            'model' => $model,
+            'cached_tokens' => $cachedTokens,
+            'prompt_tokens' => $totalTokens,
+            'output_tokens' => $usageMetadata['candidatesTokenCount'] ?? 0,
+            'cache_hit_percent' => $cachePercent . '%',
+            'cost_saving' => $cachedTokens > 0 ? '75% su ' . $cachedTokens . ' token' : 'nessuno'
+        ]);
+    }
 
     if (!isset($data['candidates'][0]['content'])) {
         error_log("Gemini No Content: " . json_encode($data));
@@ -225,8 +263,8 @@ IMPORTANTE: Quando l'utente chiede di cambiare visualizzazione/stile mappa,
 USA SEMPRE set_map_style con il parametro style corretto!
 PROMPT;
 
-    // Aggiungi il context al prompt
-    $ageaSystemPrompt .= $contextStr;
+    // NOTA: $contextStr viene aggiunto DOPO la history per ottimizzare il caching implicito di Gemini
+    // Il system prompt deve rimanere IDENTICO per sfruttare lo sconto del 75% sui token cachati
 
     $ageaTools = [
         [
@@ -245,13 +283,13 @@ PROMPT;
         ],
         [
             'name' => 'fly_to',
-            'description' => 'Sposta la vista della mappa verso una località o coordinate specifiche',
+            'description' => 'Sposta la vista della mappa verso una località, città, regione, nazione o coordinate. Usa SEMPRE questo tool quando l\'utente vuole andare da qualche parte, anche per nazioni o aree geografiche ampie.',
             'parameters' => [
                 'type' => 'object',
                 'properties' => [
                     'query' => [
                         'type' => 'string',
-                        'description' => 'Nome della località (es: "Roma", "Milano centro", "Via Roma 1, Torino") oppure coordinate nel formato "lat,lng"'
+                        'description' => 'Nome della località: città (Roma), indirizzo (Via Roma 1, Torino), regione (Toscana, Lombardia), nazione (Italia, Francia) o coordinate "lat,lng"'
                     ],
                     'zoom' => [
                         'type' => 'number',
@@ -313,17 +351,66 @@ PROMPT;
         ]
     ];
 
-    $ageaConversation = [
-        [
-            'role' => 'user',
-            'parts' => [
-                ['text' => $ageaSystemPrompt],
-                ['text' => "\n\nRICHIESTA UTENTE: {$message}"]
-            ]
-        ]
+    // =======================================================================
+    // BEST PRACTICE GEMINI: system_instruction separata + contents alternati
+    // Ref: https://ai.google.dev/gemini-api/docs/text-generation
+    // - system_instruction: istruzioni di sistema (cachate automaticamente)
+    // - contents: DEVE alternare user/model, MAI due user consecutivi
+    // =======================================================================
+
+    // System instruction = prompt base + contesto dinamico
+    $fullSystemInstruction = $ageaSystemPrompt;
+    if (!empty($contextStr)) {
+        $fullSystemInstruction .= "\n\n" . $contextStr;
+    }
+
+    // Costruisci contents con alternanza user/model corretta
+    $ageaConversation = [];
+    $lastRole = null;
+
+    // Aggiungi history (escludendo l'ultimo se è user - lo aggiungiamo come messaggio corrente)
+    if (!empty($history)) {
+        $historyCount = count($history);
+        foreach ($history as $idx => $historyMsg) {
+            $role = $historyMsg['role'] ?? 'user';
+            $content = $historyMsg['content'] ?? '';
+            if (empty($content)) continue;
+
+            // Salta l'ultimo messaggio user (lo aggiungiamo dopo come messaggio corrente)
+            if ($idx === $historyCount - 1 && $role === 'user') {
+                continue;
+            }
+
+            // Se due messaggi consecutivi hanno lo stesso role, salta (previene errori Gemini)
+            if ($role === $lastRole) {
+                continue;
+            }
+
+            $ageaConversation[] = [
+                'role' => $role,
+                'parts' => [['text' => $content]]
+            ];
+            $lastRole = $role;
+        }
+    }
+
+    // Se l'ultimo messaggio nella conversation è 'user', aggiungi una risposta model placeholder
+    // (per garantire che il prossimo messaggio user non sia consecutivo)
+    if ($lastRole === 'user') {
+        $ageaConversation[] = [
+            'role' => 'model',
+            'parts' => [['text' => 'Capito, procedo.']]
+        ];
+        $lastRole = 'model';
+    }
+
+    // Aggiungi il messaggio corrente (sempre user, sempre ultimo)
+    $ageaConversation[] = [
+        'role' => 'user',
+        'parts' => [['text' => $message]]
     ];
 
-    $ageaContent = callGemini($apiKey, 'gemini-2.5-flash', $ageaConversation, $ageaTools);
+    $ageaContent = callGemini($apiKey, 'gemini-2.5-flash', $ageaConversation, $ageaTools, $fullSystemInstruction);
     $ageaParts = $ageaContent['parts'] ?? [];
 
     // DEBUG: Log della risposta Agea
@@ -345,11 +432,45 @@ PROMPT;
     // Se Agea NON delega all'ingegnere
     if (!$ageaFunctionCall || $ageaFunctionCall['name'] !== 'delegate_to_engineer') {
 
+        // Se c'è un tool call ma nessun testo, genera un messaggio di conferma
+        $responseText = $ageaText;
+        if ($ageaFunctionCall && empty(trim($ageaText))) {
+            $toolName = $ageaFunctionCall['name'];
+            $args = $ageaFunctionCall['args'] ?? [];
+
+            switch ($toolName) {
+                case 'fly_to':
+                    $location = $args['query'] ?? 'la destinazione';
+                    $responseText = "Perfetto, ti porto a {$location}! 🗺️";
+                    break;
+                case 'set_map_style':
+                    $style = $args['style'] ?? 'nuovo';
+                    $styleNames = [
+                        'satellite' => 'satellitare',
+                        'streets' => 'stradale',
+                        'dark' => 'scuro',
+                        'light' => 'chiaro'
+                    ];
+                    $styleName = $styleNames[$style] ?? $style;
+                    $responseText = "Ecco, ho cambiato la mappa in modalità {$styleName}!";
+                    break;
+                case 'select_entity':
+                    $responseText = "Ho selezionato l'entità per te.";
+                    break;
+                case 'create_entity':
+                    $nome = $args['nome'] ?? 'nuova entità';
+                    $responseText = "Sto creando \"{$nome}\"...";
+                    break;
+                default:
+                    $responseText = "Fatto!";
+            }
+        }
+
         // Prepara risposta base
         $response = [
             'success' => true,
             'agent' => 'agea',
-            'response' => $ageaText,
+            'response' => $responseText,
             'delegated' => false
         ];
 
