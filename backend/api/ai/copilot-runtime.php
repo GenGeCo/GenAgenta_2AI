@@ -9,6 +9,7 @@
  */
 
 require_once __DIR__ . '/debug-helper.php';
+require_once __DIR__ . '/dual-brain-core.php';  // Include diretto - elimina latenza cURL
 
 // Headers CORS
 header('Access-Control-Allow-Origin: *');
@@ -264,33 +265,20 @@ if ($method === 'POST') {
             ];
         }
 
-        // Chiama dual-brain-v2
-        $ch = curl_init('https://genagenta.gruppogea.net/api/ai/dual-brain-v2');
-        curl_setopt_array($ch, [
-            CURLOPT_POST => true,
-            CURLOPT_POSTFIELDS => json_encode([
-                'message' => $userMessage,
-                'history' => $history,
-                'context' => array_merge($copilotContext, ['readables' => $readables])
-            ]),
-            CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_HTTPHEADER => ['Content-Type: application/json'],
-            CURLOPT_TIMEOUT => 60,
-            CURLOPT_SSL_VERIFYPEER => false
-        ]);
+        // Chiama dual-brain DIRETTAMENTE (elimina latenza cURL!)
+        $result = processDualBrain(
+            $userMessage,
+            $history,
+            array_merge($copilotContext, ['readables' => $readables])
+        );
 
-        $response = curl_exec($ch);
-        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        curl_close($ch);
-
-        if ($httpCode !== 200) {
-            $sendEvent('TEXT_MESSAGE_CONTENT', ['messageId' => $messageId, 'delta' => 'Errore comunicazione con Dual Brain']);
+        if (!$result || !$result['success']) {
+            $errorMsg = $result['error'] ?? 'Errore sconosciuto';
+            $sendEvent('TEXT_MESSAGE_CONTENT', ['messageId' => $messageId, 'delta' => "Errore: {$errorMsg}"]);
             $sendEvent('TEXT_MESSAGE_END', ['messageId' => $messageId]);
             $sendEvent('RUN_FINISHED', ['threadId' => $threadId, 'runId' => $runId]);
             exit;
         }
-
-        $result = json_decode($response, true);
         $responseText = $result['delegated'] ?? false
             ? trim(($result['agea_message'] ?? '') . "\n\n" . ($result['engineer_result'] ?? ''))
             : ($result['response'] ?? '');
@@ -353,35 +341,16 @@ if ($method === 'POST') {
     // ============================================
     header('Content-Type: application/json');
 
-    // Chiama dual-brain-v2
-    $ch = curl_init('https://genagenta.gruppogea.net/api/ai/dual-brain-v2');
-    curl_setopt_array($ch, [
-        CURLOPT_POST => true,
-        CURLOPT_POSTFIELDS => json_encode([
-            'message' => $userMessage,
-            'context' => array_merge($copilotContext, ['readables' => $readables])
-        ]),
-        CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_HTTPHEADER => ['Content-Type: application/json'],
-        CURLOPT_TIMEOUT => 60,
-        CURLOPT_SSL_VERIFYPEER => false
-    ]);
+    // Chiama dual-brain DIRETTAMENTE
+    $result = processDualBrain(
+        $userMessage,
+        [],  // No history per non-streaming
+        array_merge($copilotContext, ['readables' => $readables])
+    );
 
-    $response = curl_exec($ch);
-    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    curl_close($ch);
-
-    if ($httpCode !== 200) {
+    if (!$result || !$result['success']) {
         http_response_code(500);
-        echo json_encode(['error' => "Dual Brain error: HTTP $httpCode"]);
-        exit;
-    }
-
-    $result = json_decode($response, true);
-
-    if (!$result) {
-        http_response_code(500);
-        echo json_encode(['error' => 'Errore parsing risposta']);
+        echo json_encode(['error' => $result['error'] ?? 'Errore sconosciuto']);
         exit;
     }
 
