@@ -59,6 +59,13 @@ function callGemini($apiKey, $model, $conversation, $tools = [], $systemInstruct
         'generationConfig' => [
             'temperature' => $model === 'gemini-2.5-flash' ? 0.7 : 0.2,
             'maxOutputTokens' => $model === 'gemini-2.5-flash' ? 2048 : 8192
+        ],
+        // Safety Settings - Disabilita filtri per evitare blocchi silenziosi
+        'safetySettings' => [
+            ['category' => 'HARM_CATEGORY_HARASSMENT', 'threshold' => 'BLOCK_NONE'],
+            ['category' => 'HARM_CATEGORY_HATE_SPEECH', 'threshold' => 'BLOCK_NONE'],
+            ['category' => 'HARM_CATEGORY_SEXUALLY_EXPLICIT', 'threshold' => 'BLOCK_NONE'],
+            ['category' => 'HARM_CATEGORY_DANGEROUS_CONTENT', 'threshold' => 'BLOCK_NONE']
         ]
     ];
 

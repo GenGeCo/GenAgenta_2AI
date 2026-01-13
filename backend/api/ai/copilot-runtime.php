@@ -220,8 +220,17 @@ if ($method === 'POST') {
         header('Connection: keep-alive');
         header('X-Accel-Buffering: no'); // Disabilita buffering nginx
 
-        // Disabilita buffering PHP
-        if (ob_get_level()) ob_end_clean();
+        // Disabilita TUTTI i livelli di buffering PHP (critico per SSE)
+        while (ob_get_level()) ob_end_flush();
+
+        // Disabilita implicit flush
+        @ini_set('output_buffering', 'off');
+        @ini_set('zlib.output_compression', false);
+
+        // Forza flush immediato
+        if (function_exists('apache_setenv')) {
+            @apache_setenv('no-gzip', '1');
+        }
 
         // Funzione helper per inviare eventi SSE
         // CopilotKit vuole SCREAMING_SNAKE_CASE per type + camelCase per campi
